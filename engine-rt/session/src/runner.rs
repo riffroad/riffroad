@@ -11,7 +11,7 @@ use opensmith_game::Chart;
 
 use crate::calibration::CalibrationPlan;
 use crate::events::UiEvent;
-use crate::session::{AudioBackend, RiffLoop, Session, SessionConfig};
+use crate::session::{AudioBackend, Judging, RiffLoop, Session, SessionConfig};
 
 /// How often the session thread reads the engine and judges.
 const PERIOD: Duration = Duration::from_millis(2);
@@ -82,6 +82,8 @@ pub enum Command {
     Sound { name: String, gain: f32, at: Option<f64> },
     /// The looping background sound (the crowd) glides to `gain`; `None` fades it out.
     Bed { name: Option<String>, gain: f32 },
+    /// How forgiving the judge is, from the next song.
+    Judging(Judging),
 }
 
 /// The devices a backend is built on: name fragments, `None` for the automatic choice.
@@ -252,6 +254,7 @@ where
                 Ok(Command::AddSound { name, rate, samples }) => session.add_sound(name, rate, samples),
                 Ok(Command::Sound { name, gain, at }) => session.play_sound(&name, gain, at),
                 Ok(Command::Bed { name, gain }) => session.set_bed(name, gain),
+                Ok(Command::Judging(j)) => session.set_judging(j),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }

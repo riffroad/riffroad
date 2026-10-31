@@ -139,6 +139,13 @@
           <label class="wide"><input type="checkbox" name="masterMode" /> Mode Maître : les notes des phrases maîtrisées s’effacent avant d’arriver, à jouer de mémoire</label>
           <label class="wide live-only"><input type="checkbox" name="autoLatency" /> Ajuster la latence tout seul : en fin de morceau, si toutes tes notes arrivent décalées d’à peu près autant</label>
           <label class="wide live-only"><input type="checkbox" name="recordTakes" /> Enregistrer ma guitare pendant les morceaux, pour régler la détection des notes (les prises restent sur ce Mac)</label>
+          <label class="live-only" title="À partir du prochain morceau.">Jugement des notes
+            <select name="judging">
+              <option value="lenient">Indulgent : les accords approximatifs comptent aussi</option>
+              <option value="normal">Normal</option>
+              <option value="strict">Strict : seulement ce qui est joué proprement</option>
+            </select>
+          </label>
           <label class="live-only" title="Les morceaux à quelques demi-tons de cet accordage sont décalés pour lui : pas besoin de réaccorder.">Ma guitare reste accordée en
             <select name="guitarTuning"></select>
           </label>

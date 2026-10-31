@@ -20,7 +20,7 @@ use opensmith_game::Chart;
 use opensmith_session::guitarist::{perform_with, Played, Player};
 use opensmith_session::samples::SampleBank;
 use opensmith_session::replay::{replay, Agreement};
-use opensmith_session::{SessionConfig, Take};
+use opensmith_session::{Judging, SessionConfig, Take};
 
 /// Real playing whose chart says what was played (`--takes`), altered so that some of it becomes
 /// mistakes without touching the sound: a note moved a semitone (a wrong note), a note moved
@@ -84,7 +84,7 @@ fn takes_in(path: &Path) -> Vec<PathBuf> {
 }
 
 /// The real takes judged as played, then with mistakes written into their charts.
-fn real(paths: &[PathBuf], each: bool) {
+fn real(paths: &[PathBuf], each: bool, cfg: SessionConfig) {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).saturating_sub(2).max(1);
     let total = Mutex::new(Agreement::default());
     let next = Mutex::new(0usize);
@@ -100,7 +100,7 @@ fn real(paths: &[PathBuf], each: bool) {
                 let Ok(take) = Take::load(path) else { continue };
                 let (chart, truth) = with_mistakes(&take, k as u64 + 1);
                 let altered = Take { chart: chart.clone(), guitar: take.guitar.clone(), anchors: take.anchors.clone(), ..take };
-                let events = replay(&altered, &EngineConfig::default(), SessionConfig::default());
+                let events = replay(&altered, &EngineConfig::default(), cfg);
                 let one = Agreement::of(&truth, &events, &chart);
                 if each {
                     let (right, wrong) = one.fairness();
@@ -139,6 +139,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let (mut players, mut level, mut songs, mut seed, mut paths) = (vec![Player::good()], u32::MAX, 20usize, 1u64, Vec::new());
     let mut each = false;
+    let mut cfg = SessionConfig::default();
     let mut takes: Vec<PathBuf> = Vec::new();
     let mut bank: Option<SampleBank> = None;
     while let Some(a) = args.next() {
@@ -152,6 +153,22 @@ fn main() {
             "--songs" => songs = value().parse().unwrap_or(20),
             "--seed" => seed = value().parse().unwrap_or(1),
             "--each" => each = true,
+            // A preset (strict, normal, lenient) or its values: hit window, chord share, heard, foreign.
+            "--judging" => {
+                let v = value();
+                let numbers: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+                let judging = match numbers[..] {
+                    [hit_window, share, heard, foreign] => Some(Judging { hit_window, chord_share: share as f32, heard: heard as f32, foreign: foreign as f32 }),
+                    _ => Judging::by_name(&v),
+                };
+                match judging {
+                    Some(j) => {
+                        cfg.judging = j;
+                        cfg.game.hit_window = j.hit_window;
+                    }
+                    None => eprintln!("--judging : strict, normal, lenient, ou fenêtre,part,entendue,étrangère"),
+                }
+            }
             "--takes" => takes.extend(takes_in(Path::new(&value()))),
             "--real-notes" => {
                 let dir = value();
@@ -167,7 +184,7 @@ fn main() {
         }
     }
     if !takes.is_empty() {
-        real(&takes, each);
+        real(&takes, each, cfg);
         if paths.is_empty() {
             return;
         }
@@ -198,7 +215,7 @@ fn main() {
                     }
                     let samples = bank.as_ref().map(|b| b as &dyn opensmith_dsp::guitar::Samples);
                     let perf = perform_with(&chart, level, player, seed.wrapping_add(k as u64), samples);
-                    let events = replay(&perf.take, &EngineConfig::default(), SessionConfig::default());
+                    let events = replay(&perf.take, &EngineConfig::default(), cfg);
                     let one = Agreement::of(&perf.truth, &events, &chart);
                     if each {
                         let (right, wrong) = one.fairness();

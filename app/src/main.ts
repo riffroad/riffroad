@@ -101,6 +101,8 @@ interface Settings extends GuitarValues {
   guitarTuning: string;
   /** A steady lag at the end of a song is compensated without asking. */
   autoLatency: boolean;
+  /** How forgiving the judge is, from the next song. */
+  judging: Judging;
   /** The place behind the highway outside the career (whose gigs bring their own). */
   scenery: SceneryId;
   /** The guitar's sound, in free play and in songs. */
@@ -120,12 +122,16 @@ const DEFAULTS: Settings = {
   recordTakes: false,
   guitarTuning: '',
   autoLatency: true,
+  judging: 'normal',
   scenery: 'concert',
   amp: DEFAULT_AMP,
   autopilot: false,
   ...DEFAULT_GUITAR,
 };
 const STANDARD = [40, 45, 50, 55, 59, 64];
+/** How forgiving the judge can be. */
+type Judging = 'lenient' | 'normal' | 'strict';
+const JUDGINGS: readonly Judging[] = ['lenient', 'normal', 'strict'];
 /** Note speeds offered (highway units per second), as in the game settings. */
 const SPEEDS = [
   { value: 9, label: t('Lente') },
@@ -136,7 +142,12 @@ const SPEEDS = [
 function loadSettings(): Settings {
   try {
     const saved = { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(STORAGE) ?? '{}') as Partial<Settings>) };
-    return { ...saved, amp: sanitizeAmp(saved.amp), scenery: isScenery(saved.scenery) ? saved.scenery : 'concert' };
+    return {
+      ...saved,
+      amp: sanitizeAmp(saved.amp),
+      scenery: isScenery(saved.scenery) ? saved.scenery : 'concert',
+      judging: JUDGINGS.includes(saved.judging) ? saved.judging : 'normal',
+    };
   } catch {
     return { ...DEFAULTS };
   }
@@ -1827,6 +1838,7 @@ function syncSettings(): void {
   field<HTMLInputElement>('masterMode').checked = settings.masterMode;
   field<HTMLInputElement>('recordTakes').checked = settings.recordTakes;
   field<HTMLInputElement>('autoLatency').checked = settings.autoLatency;
+  field<HTMLSelectElement>('judging').value = settings.judging;
   field<HTMLSelectElement>('scenery').value = settings.scenery;
   field<HTMLSelectElement>('guitarTuning').value = settings.guitarTuning;
   if (!gig) highway.setScenery(settings.scenery);
@@ -1846,6 +1858,12 @@ form.addEventListener('input', (e) => {
   if (settings.recordTakes !== field<HTMLInputElement>('recordTakes').checked) {
     settings.recordTakes = !settings.recordTakes;
     if (engine instanceof TauriEngine) engine.setRecording(settings.recordTakes);
+  if (engine instanceof TauriEngine) engine.setJudging(settings.judging);
+  }
+  const judging = field<HTMLSelectElement>('judging').value as Judging;
+  if (JUDGINGS.includes(judging) && judging !== settings.judging) {
+    settings.judging = judging;
+    if (engine instanceof TauriEngine) engine.setJudging(judging);
   }
   settings.guitarTuning = field<HTMLSelectElement>('guitarTuning').value;
   const scenery = field<HTMLSelectElement>('scenery').value;

@@ -30,10 +30,6 @@ const STRUM: f64 = 0.05;
 /// A strum the tracker did not notice still makes the guitar this much louder (dB): over the
 /// 40 ms from it against the 45 ms before.
 const STRUM_RISE_DB: f32 = 2.0;
-/// A note or chord the detector says was attacked with at least this probability counts.
-const HEARD: f32 = 0.5;
-/// A note the chart does not ask for, heard this surely in a chord's strum, makes it wrong.
-const WRONG: f32 = 0.85;
 /// Takes shorter than this are not kept (s).
 const MIN_TAKE: f64 = 10.0;
 
@@ -47,9 +43,41 @@ pub trait AudioBackend {
     }
 }
 
+/// How forgiving the judge is: the player's choice (Settings → Game), strict to lenient.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Judging {
+    /// A note or chord counts when played within ± this many seconds of its time.
+    pub hit_window: f64,
+    /// Share of a chord's notes the detector must hear in its strum.
+    pub chord_share: f32,
+    /// How surely the detector must say a note was attacked for it to count.
+    pub heard: f32,
+    /// How surely a note foreign to a chord must be heard in its strum to make it wrong.
+    pub foreign: f32,
+}
+
+impl Judging {
+    // Measured on the virtual guitarist's 24 songs, a beginner's right playing counted / wrong
+    // refused: strict 85.7 / 83.5 %, normal 88.3 / 81.4 %, lenient 93.1 / 72.8 %.
+    pub const STRICT: Judging = Judging { hit_window: 0.10, chord_share: 0.75, heard: 0.5, foreign: 0.85 };
+    pub const NORMAL: Judging = Judging { hit_window: 0.10, chord_share: 0.66, heard: 0.4, foreign: 0.93 };
+    pub const LENIENT: Judging = Judging { hit_window: 0.12, chord_share: 0.5, heard: 0.4, foreign: 0.97 };
+
+    pub fn by_name(name: &str) -> Option<Judging> {
+        match name {
+            "strict" => Some(Judging::STRICT),
+            "normal" => Some(Judging::NORMAL),
+            "lenient" => Some(Judging::LENIENT),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct SessionConfig {
     pub game: GameConfig,
+    /// How forgiving the judge is; its hit window is the game's.
+    pub judging: Judging,
     /// Audio after a strum that the chord verifier looks at (s).
     pub chord_window: f64,
     /// Concert pitch.
@@ -58,7 +86,8 @@ pub struct SessionConfig {
 
 impl Default for SessionConfig {
     fn default() -> Self {
-        SessionConfig { game: GameConfig { lookahead: 3.4, ..GameConfig::default() }, chord_window: 0.09, a4: 440.0 }
+        let judging = Judging::NORMAL;
+        SessionConfig { game: GameConfig { lookahead: 3.4, hit_window: judging.hit_window, ..GameConfig::default() }, judging, chord_window: 0.09, a4: 440.0 }
     }
 }
 
@@ -183,14 +212,14 @@ const STRUM_LOOKS: [f64; 3] = [-0.01, 0.015, 0.04];
 /// three quarters of its notes heard, and no note foreign to it (not in its pitch classes) heard
 /// surely, but for an open string next to the chord's that the strum brushed on its way
 /// (`brushable`): beginners do it all the time, and it is still the chord.
-fn strummed(first: i32, probs: &[f32], pitches: &[i32], brushable: &[i32]) -> bool {
+fn strummed(first: i32, probs: &[f32], pitches: &[i32], brushable: &[i32], judging: &Judging) -> bool {
     let p = |m: i32| probs.get((m - first) as usize).copied().unwrap_or(0.0);
-    let heard = pitches.iter().filter(|&&m| p(m) >= HEARD).count();
+    let heard = pitches.iter().filter(|&&m| p(m) >= judging.heard).count();
     let classes: Vec<i32> = pitches.iter().map(|m| m.rem_euclid(12)).collect();
     let foreign = (0..probs.len() as i32)
         .map(|k| k + first)
-        .any(|m| !classes.contains(&m.rem_euclid(12)) && !brushable.contains(&m) && p(m) >= WRONG);
-    4 * heard >= 3 * pitches.len() && !foreign
+        .any(|m| !classes.contains(&m.rem_euclid(12)) && !brushable.contains(&m) && p(m) >= judging.foreign);
+    heard as f32 >= (judging.chord_share * pitches.len() as f32 - 1e-4).ceil() && !foreign
 }
 
 /// Sounds the session may be asked to play over the music (interface, crowd): mono at their
@@ -294,6 +323,12 @@ impl<B: AudioBackend> Session<B> {
             self.set_bed(Some(name), gain);
         }
         old
+    }
+
+    /// How forgiving the judge is, from the next song.
+    pub fn set_judging(&mut self, judging: Judging) {
+        self.cfg.judging = judging;
+        self.cfg.game.hit_window = judging.hit_window;
     }
 
     /// Keeps `samples` (mono, `rate` Hz) to play as `name`, replacing any sound of that name.
@@ -737,6 +772,8 @@ impl<B: AudioBackend> Session<B> {
 
         if clock.playing {
             let (w, window) = (self.cfg.game.hit_window, self.cfg.chord_window);
+            let judging = self.cfg.judging;
+            let heard = judging.heard;
             // Audio needed after a strum: the chord window, or what the note detector looks at.
             let listen = self.listener.as_ref().map_or(window, Listener::after);
             let a4 = self.cfg.a4 * 2f32.powf(self.cents as f32 / 1200.0);
@@ -770,7 +807,7 @@ impl<B: AudioBackend> Session<B> {
                                 None => best = Some((first, probs)),
                             }
                         }
-                        best.is_some_and(|(first, probs)| strummed(first, &probs, &pitches, &brushable))
+                        best.is_some_and(|(first, probs)| strummed(first, &probs, &pitches, &brushable, &judging))
                     }
                     None => strum_audio(monitor, &clock, &self.history, &mut self.scratch, t + offset, window, sr)
                         .is_some_and(|audio| self.verifier.verify(audio, &pitches, a4).accepted),
@@ -826,7 +863,7 @@ impl<B: AudioBackend> Session<B> {
                     let heard = candidates.into_iter().find(|&a| {
                         listener
                             .attacked(monitor, &clock, &self.history, a + offset, self.rate, self.cents, sr)
-                            .is_some_and(|(first, probs)| probs.get((midi - first) as usize).is_some_and(|&p| p >= HEARD))
+                            .is_some_and(|(first, probs)| probs.get((midi - first) as usize).is_some_and(|&p| p >= heard))
                     });
                     self.events.extend(game.on_note_heard(index, heard.is_some(), heard).map(UiEvent::from));
                 }
@@ -944,4 +981,40 @@ fn rise_db(monitor: &Monitor, clock: &PlayerClock, history: &TapHistory, t: f64,
 /// (the player tuned to it).
 fn heard_pitch(midi: i32, cents: f32, song_cents: f64) -> f64 {
     midi as f64 + (cents as f64 - song_cents) / 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The detector's probabilities from MIDI 40, `heard` the notes named.
+    fn probs(heard: &[(i32, f32)]) -> Vec<f32> {
+        let mut p = vec![0.02f32; 40];
+        for &(m, v) in heard {
+            p[(m - 40) as usize] = v;
+        }
+        p
+    }
+
+    #[test]
+    fn each_judging_level_forgives_what_it_says() {
+        let g5 = [43, 50, 55];
+        // Two of the three strings clear, the third faint: only strict wants all three.
+        let faint = probs(&[(43, 0.9), (50, 0.9), (55, 0.3)]);
+        assert!(!strummed(40, &faint, &g5, &[], &Judging::STRICT));
+        assert!(strummed(40, &faint, &g5, &[], &Judging::NORMAL));
+        // A foreign note heard fairly surely (0.9): wrong for strict, forgiven above.
+        let foreign = probs(&[(43, 0.9), (50, 0.9), (55, 0.9), (46, 0.9)]);
+        assert!(!strummed(40, &foreign, &g5, &[], &Judging::STRICT));
+        assert!(strummed(40, &foreign, &g5, &[], &Judging::NORMAL));
+        // Heard for sure, a foreign note is wrong at every level but lenient, which forgives
+        // only a little more.
+        let loud = probs(&[(43, 0.9), (50, 0.9), (55, 0.9), (46, 0.99)]);
+        assert!(!strummed(40, &loud, &g5, &[], &Judging::NORMAL));
+        assert!(!strummed(40, &loud, &g5, &[], &Judging::LENIENT));
+        // Half the chord is enough when lenient.
+        let half = probs(&[(43, 0.9), (50, 0.3), (55, 0.9)]);
+        assert!(strummed(40, &half, &[43, 50, 55, 59], &[], &Judging::LENIENT));
+        assert!(!strummed(40, &half, &[43, 50, 55, 59], &[], &Judging::NORMAL));
+    }
 }

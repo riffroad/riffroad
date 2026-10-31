@@ -16,7 +16,7 @@ use import::{Importer, Job, JobState, Origin, Pipeline, Queue, ORIGIN};
 use opensmith_audio::{list_devices, Engine, EngineConfig, InputKind};
 use opensmith_dsp::{AmpKnobs, AmpModel, ChainParams};
 use opensmith_game::Chart;
-use opensmith_session::{load_track, load_track_with_stem, metronome, Command, Devices, EngineBackend, RiffLoop, SessionConfig, SessionHandle, UiEvent};
+use opensmith_session::{load_track, load_track_with_stem, metronome, Command, Devices, EngineBackend, Judging, RiffLoop, SessionConfig, SessionHandle, UiEvent};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
@@ -564,6 +564,14 @@ fn set_bed(app: State<'_, App>, name: Option<String>, gain: f32) {
     app.session.send(Command::Bed { name, gain });
 }
 
+/// How forgiving the judge is (lenient, normal, strict), from the next song.
+#[tauri::command]
+fn set_judging(app: State<'_, App>, name: String) -> Result<(), String> {
+    let judging = Judging::by_name(&name).ok_or_else(|| format!("jugement inconnu : {name}"))?;
+    app.session.send(Command::Judging(judging));
+    Ok(())
+}
+
 /// The player's progress (scores, phrase levels, mastery), kept in the library folder.
 #[tauri::command]
 fn read_progress(app: State<'_, App>) -> String {
@@ -902,6 +910,7 @@ pub fn run() {
             add_sound,
             play_sound,
             set_bed,
+            set_judging,
             play,
             pause,
             seek,
