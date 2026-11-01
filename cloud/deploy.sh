@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Puts OpenSmith's online side on a Firebase project, or deploys a new version of the server:
+# Puts Riffroad's online side on a Firebase project, or deploys a new version of the server:
 #   ./deploy.sh <project-id> [billing-account-id]
 # The billing account (Cloud Run needs one) is linked, and a 5-unit monthly budget alert set on
 # it, only when given. Uses your own `gcloud` and `firebase` logins. Run from anywhere.
@@ -14,7 +14,7 @@ gc() { gcloud --project "$P" --quiet "$@"; }
 
 if [ -n "$BILLING" ]; then
   gcloud billing projects link "$P" --billing-account "$BILLING" --quiet
-  gcloud billing budgets create --billing-account "$BILLING" --display-name "OpenSmith" --budget-amount 5 \
+  gcloud billing budgets create --billing-account "$BILLING" --display-name "Riffroad" --budget-amount 5 \
     --filter-projects "projects/$P" --threshold-rule percent=0.5 --threshold-rule percent=1.0 --quiet || true
 fi
 
@@ -33,7 +33,7 @@ curl -sf -X PATCH "https://identitytoolkit.googleapis.com/admin/v2/projects/$P/c
   || echo "!! Turn it on by hand: https://console.firebase.google.com/project/$P/authentication/providers (Email/Password)"
 
 echo "== The server's own account: Firestore only"
-gc iam service-accounts describe "$SA" >/dev/null 2>&1 || gc iam service-accounts create "$SERVICE" --display-name "OpenSmith server"
+gc iam service-accounts describe "$SA" >/dev/null 2>&1 || gc iam service-accounts create "$SERVICE" --display-name "Riffroad server"
 gc projects add-iam-policy-binding "$P" --member "serviceAccount:$SA" --role roles/datastore.user --condition None >/dev/null
 
 echo "== Cloud Run"
@@ -45,7 +45,7 @@ curl -sf "$URL/health" >/dev/null && echo "health: ok"
 
 echo "== The app's public key (sign-in and token refresh only)"
 APP=$(firebase apps:list WEB --project "$P" --json | python3 -c "import json,sys; a=json.load(sys.stdin).get('result',[]); print(a[0]['appId'] if a else '')")
-[ -n "$APP" ] || APP=$(firebase apps:create WEB OpenSmith --project "$P" --json | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['appId'])")
+[ -n "$APP" ] || APP=$(firebase apps:create WEB Riffroad --project "$P" --json | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['appId'])")
 KEY=$(firebase apps:sdkconfig WEB "$APP" --project "$P" --json | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['sdkConfig']['apiKey'])")
 KEY_NAME=$(gc services api-keys lookup "$KEY" --format 'value(name)')
 gc services api-keys update "$KEY_NAME" --api-target=service=identitytoolkit.googleapis.com --api-target=service=securetoken.googleapis.com

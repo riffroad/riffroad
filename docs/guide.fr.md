@@ -1,4 +1,4 @@
-# OpenSmith — guide détaillé
+# Riffroad — guide détaillé
 
 *Le [README](../README.fr.md) présente le jeu ; ce guide détaille les outils en ligne de commande, le développement et toutes les fonctions de l'app.*
 

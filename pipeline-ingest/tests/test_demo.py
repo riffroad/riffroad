@@ -15,7 +15,7 @@ SHIPPED = Path(__file__).resolve().parents[2] / "app" / "demo" / "OpenSmith - Fi
 def test_the_demo_song_is_a_playable_chart_on_its_backing_track(tmp_path):
     chart = make_demo(tmp_path)
     saved = Chart.load(tmp_path / "song_chart.json")
-    assert (saved.title, saved.artist, saved.source_kind) == ("First Riff", "OpenSmith", "synth")
+    assert (saved.title, saved.artist, saved.source_kind) == ("First Riff", "Riffroad", "synth")
     assert len(saved.notes) + len(saved.chords) > 80 and saved.max_difficulty >= 2
     info = sf.info(str(tmp_path / BACKING))
     assert (info.samplerate, info.channels) == (RATE, 1)

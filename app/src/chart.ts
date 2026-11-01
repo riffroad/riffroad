@@ -110,7 +110,7 @@ export const DEFAULT_ANCHOR: Anchor = { time: 0, fret: 1, width: 4 };
  */
 export function parseChart(json: unknown): Chart {
   const c = json as Chart;
-  if (!c || c.format !== 'opensmith-chart') throw new Error(t('ce fichier n\'est pas un chart OpenSmith'));
+  if (!c || c.format !== 'opensmith-chart') throw new Error(t('ce fichier n\'est pas un chart Riffroad'));
   if (c.version !== 1) throw new Error(t('version de chart non gérée : {version}', { version: c.version }));
   return c;
 }

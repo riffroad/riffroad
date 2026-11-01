@@ -335,7 +335,7 @@ export function lessonChart(lesson: Lesson, index: number, pace = 1): Chart {
   return {
     format: 'opensmith-chart',
     version: 1,
-    meta: { title, artist: t('Leçons OpenSmith'), album: null, year: null, duration, source: { kind: 'lesson', file: lesson.id }, generator: 'opensmith-lessons' },
+    meta: { title, artist: t('Leçons Riffroad'), album: null, year: null, duration, source: { kind: 'lesson', file: lesson.id }, generator: 'opensmith-lessons' },
     audio: { backing: null, guitar: null, mix: null, offset: 0 },
     arrangement: { name: 'Lead', type: 'lead', tuning: { name: 'E Standard', strings: [...STANDARD] }, capo: 0, maxDifficulty: 0 },
     tempo: { bpm: lesson.bpm * pace, timeSignature: [4, 4] },

@@ -1090,7 +1090,7 @@ pub fn run() {
             write_progress
         ])
         .build(tauri::generate_context!())
-        .expect("OpenSmith n'a pas pu démarrer")
+        .expect("Riffroad n'a pas pu démarrer")
         .run(|app, event| {
             // The import under way stops with the app and starts again at the next launch.
             if let tauri::RunEvent::Exit = event

@@ -10,7 +10,7 @@ pub enum ChartError {
     Io(#[from] std::io::Error),
     #[error("invalid chart JSON: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("not an OpenSmith chart (format {format:?}, version {version})")]
+    #[error("not a Riffroad chart (format {format:?}, version {version})")]
     Format { format: String, version: u32 },
     #[error("chord template {0} does not exist")]
     Template(usize),

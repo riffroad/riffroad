@@ -2,7 +2,7 @@
 export const ACCOUNT: Record<string, string> = {
   // Settings → Account (account.ts)
   'Compte': 'Account',
-  'Ton compte OpenSmith': 'Your OpenSmith account',
+  'Ton compte Riffroad': 'Your Riffroad account',
   'Ta carrière et ta progression, sur tous tes Mac. Les réglages (latence, entrée audio, accordage) restent sur chaque Mac.':
     'Your career and progress, on all your Macs. Settings (latency, audio input, tuning) stay on each Mac.',
   'E-mail': 'E-mail',

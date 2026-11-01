@@ -1,8 +1,8 @@
-# OpenSmith
+# Riffroad
 
 *English: [README.md](README.md)*
 
-![OpenSmith : une vraie guitare sur une piste de notes 3D, du garage au stade](docs/trailer.gif)
+![Riffroad : une vraie guitare sur une piste de notes 3D, du garage au stade](docs/trailer.gif)
 
 Un jeu de guitare pour macOS. Branche une vraie guitare électrique, glisse n'importe quel MP3 et
 joue-le sur une piste de notes en 3D, avec détection des notes en temps réel, un simulateur
@@ -10,7 +10,7 @@ d'ampli et une carrière du garage au stade.
 
 - **Tes propres morceaux** : un MP3 (ou WAV, FLAC, M4A…) est séparé en pistes (Demucs), la
   guitare transcrite (Basic Pitch) et placée sur le manche (un solveur de Viterbi), avec cinq
-  niveaux de difficulté. Pose une tablature Guitar Pro à côté du MP3 et OpenSmith prend ses
+  niveaux de difficulté. Pose une tablature Guitar Pro à côté du MP3 et Riffroad prend ses
   notes, calées sur l'enregistrement. Les morceaux écrits à la main au format
   [feedpak](https://github.com/got-feedBack/feedpak-spec) (le format ouvert de feedBack) se jouent
   tels quels, avec leur audio.
@@ -36,13 +36,13 @@ d'ampli et une carrière du garage au stade.
 
 ## Installer
 
-**Télécharger** : prends le `.dmg` sur la page [Releases](../../releases) et glisse OpenSmith
+**Télécharger** : prends le `.dmg` sur la page [Releases](../../releases) et glisse Riffroad
 dans Applications. Les versions ne sont pas encore signées par Apple : la première fois, macOS
 refuse d'ouvrir l'app. Ouvre **Réglages Système → Confidentialité et sécurité** et clique sur
 **Ouvrir quand même** (sur macOS 13–14 : clic droit sur l'app → Ouvrir), ou lance :
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/OpenSmith.app
+xattr -dr com.apple.quarantine /Applications/Riffroad.app
 ```
 
 **Compiler depuis les sources** (Rust, Node 20+, uv) :
@@ -56,7 +56,7 @@ L'app arrive dans `app/src-tauri/target/release/bundle/`. Voir
 
 ## Premiers pas
 
-1. Ouvre OpenSmith. Un court guide te fait brancher la guitare, régler le niveau d'entrée,
+1. Ouvre Riffroad. Un court guide te fait brancher la guitare, régler le niveau d'entrée,
    calibrer la latence (gratter sur 12 clics) et t'accorder.
 2. **Morceaux** : cinq morceaux pour commencer : First Riff, fait pour un premier essai, et
    quatre morceaux rock de Shane Ivers (CC BY 4.0), le groupe qui joue autour de ta guitare.
@@ -73,13 +73,13 @@ tout seul.
 ## FAQ
 
 **Des morceaux sont-ils fournis ?** Seulement le morceau de démo, généré par du code. Tu
-apportes ta musique : OpenSmith convertit les fichiers que tu as, sur ton Mac. Rien n'est
+apportes ta musique : Riffroad convertit les fichiers que tu as, sur ton Mac. Rien n'est
 envoyé en ligne.
 
 **Que valent les partitions faites depuis un MP3 ?** Bien pour les riffs et les parties
 claires ; approximatives sur les guitares denses, saturées ou superposées, où l'IA rate
 beaucoup de notes. Pour une partition exacte, pose la tablature Guitar Pro du morceau
-(`.gp3`/`.gp4`/`.gp5`) à côté du MP3 avec un nom proche : OpenSmith prend ses notes et les cale
+(`.gp3`/`.gp4`/`.gp5`) à côté du MP3 avec un nom proche : Riffroad prend ses notes et les cale
 sur l'enregistrement.
 
 **Faut-il le Real Tone Cable ?** Non. N'importe quelle interface audio marche ; choisis son
@@ -98,7 +98,7 @@ PipeWire (ou JACK) et vérifier que la piste de notes 3D tient 60 images/s dans 
 connais ces API audio, ton aide est bienvenue : voir [CONTRIBUTING.md](CONTRIBUTING.md). Pas de
 version pour Mac Intel aujourd'hui.
 
-**Où sont mes morceaux ?** Dans `~/Music/OpenSmith`, un dossier par morceau (partition, piste
+**Où sont mes morceaux ?** Dans `~/Music/OpenSmith` (l'ancien nom du jeu), un dossier par morceau (partition, piste
 d'accompagnement, pochette).
 
 ## Pour les développeurs
@@ -111,14 +111,14 @@ pour tester le moteur audio) et toutes les fonctions de l'app sont décrits dans
 
 ## Licence
 
-OpenSmith est un logiciel libre sous [licence publique générale GNU v3.0 ou ultérieure](LICENSE) :
+Riffroad est un logiciel libre sous [licence publique générale GNU v3.0 ou ultérieure](LICENSE) :
 tu peux l'utiliser, l'étudier, le partager et le modifier ; les versions que tu distribues
 restent sous la même licence, avec leur code source. Les composants tiers gardent leur licence
 ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 ## Marques
 
-Rocksmith® est une marque d'Ubisoft Entertainment. OpenSmith est un projet indépendant, sans
+Rocksmith® est une marque d'Ubisoft Entertainment. Riffroad est un projet indépendant, sans
 lien avec Ubisoft, ni approuvé ni soutenu par Ubisoft. Il ne contient ni contenu, ni code, ni
 clé de chiffrement du jeu ; Rocksmith n'est cité que pour désigner le matériel compatible (le
 Real Tone Cable).

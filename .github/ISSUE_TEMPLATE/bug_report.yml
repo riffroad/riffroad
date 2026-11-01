@@ -37,7 +37,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: OpenSmith version or commit
+      label: Riffroad version or commit
   - type: textarea
     id: logs
     attributes:

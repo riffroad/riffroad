@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>OpenSmith listens to your guitar (USB guitar cable or audio interface) to recognise the notes you play.</string>
+  <string>Riffroad listens to your guitar (USB guitar cable or audio interface) to recognise the notes you play.</string>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleLocalizations</key>

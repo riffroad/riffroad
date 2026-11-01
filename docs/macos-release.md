@@ -6,8 +6,8 @@
 cd app && npm ci && npm run tauri build
 ```
 
-The app and a disk image land in `app/src-tauri/target/release/bundle/` (`macos/OpenSmith.app`,
-`dmg/OpenSmith_<version>_aarch64.dmg`). Apple Silicon only.
+The app and a disk image land in `app/src-tauri/target/release/bundle/` (`macos/Riffroad.app`,
+`dmg/Riffroad_<version>_aarch64.dmg`). Apple Silicon only.
 
 ## What a built app uses on the player's Mac
 
@@ -30,15 +30,15 @@ A development build (`npm run tauri dev`) keeps using the repository: `pipeline-
 ## Signing and notarisation
 
 Today the app is only ad-hoc signed. A copy downloaded from the internet is quarantined, and
-Gatekeeper refuses to open it ("OpenSmith cannot be opened because Apple cannot check it for
+Gatekeeper refuses to open it ("Riffroad cannot be opened because Apple cannot check it for
 malicious software", or "is damaged").
 
 ### Workaround for players (unsigned builds)
 
-1. Move `OpenSmith.app` to `/Applications`.
+1. Move `Riffroad.app` to `/Applications`.
 2. Open it once; when macOS refuses, open **System Settings → Privacy & Security**, scroll down
    and click **Open Anyway** (macOS 15 and later; on macOS 13–14, right-click the app → Open).
-3. Or, in a terminal: `xattr -dr com.apple.quarantine /Applications/OpenSmith.app`
+3. Or, in a terminal: `xattr -dr com.apple.quarantine /Applications/Riffroad.app`
 
 ### Proper fix: Developer ID + notarisation
 
@@ -63,7 +63,7 @@ Needs a paid [Apple Developer Program](https://developer.apple.com/programs/) me
    (Or `APPLE_ID`, `APPLE_PASSWORD` — an app-specific password — and `APPLE_TEAM_ID`.)
    In CI, `APPLE_CERTIFICATE` (the .p12, base64) and `APPLE_CERTIFICATE_PASSWORD` import the
    certificate into a temporary keychain.
-4. Check: `spctl -a -vv /path/to/OpenSmith.app` must say `source=Notarized Developer ID`.
+4. Check: `spctl -a -vv /path/to/Riffroad.app` must say `source=Notarized Developer ID`.
 
 `app/src-tauri/Entitlements.plist` grants `com.apple.security.device.audio-input`: under the
 hardened runtime that comes with a Developer ID signature, the guitar input would otherwise be

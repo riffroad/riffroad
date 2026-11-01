@@ -244,7 +244,7 @@ pub fn compose(seed: u64, seconds: f64) -> Chart {
     let templates: Vec<Value> = p.templates.iter().map(|f| json!({ "name": "", "frets": f, "fingers": f.iter().map(|_| -1).collect::<Vec<_>>() })).collect();
     let doc = json!({
         "format": "opensmith-chart", "version": 1,
-        "meta": { "title": format!("Étude {seed}"), "artist": "OpenSmith", "album": null, "year": null, "duration": duration, "source": { "kind": "composer", "file": format!("{seed}") }, "generator": "composer" },
+        "meta": { "title": format!("Étude {seed}"), "artist": "Riffroad", "album": null, "year": null, "duration": duration, "source": { "kind": "composer", "file": format!("{seed}") }, "generator": "composer" },
         "audio": { "backing": null, "guitar": null, "mix": null, "offset": 0.0 },
         "arrangement": { "name": "Lead", "type": "lead", "tuning": { "name": "E Standard", "strings": OPEN_STRINGS }, "capo": 0, "maxDifficulty": 0 },
         "tempo": { "bpm": bpm, "timeSignature": [4, 4] },

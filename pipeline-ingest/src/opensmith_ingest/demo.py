@@ -16,7 +16,7 @@ from .builder import BeatGrid, build_chart
 from .chart import Chart
 
 TITLE = "First Riff"
-ARTIST = "OpenSmith"
+ARTIST = "Riffroad"
 ALBUM = "Demo"
 # Mono at 32 kHz: bass and drums only, a light file to keep in the repository.
 RATE = 32_000

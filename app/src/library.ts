@@ -35,7 +35,7 @@ export function sourceOf(song: SongEntry): SongSource {
 
 /** What the source badge says about where this song's notes come from. */
 export function aboutSource(song: SongEntry): string {
-  return song.source === 'synth' ? t('Morceau de démonstration généré par OpenSmith : les notes exactes de sa guitare.') : SOURCES[sourceOf(song)].about;
+  return song.source === 'synth' ? t('Morceau de démonstration généré par Riffroad : les notes exactes de sa guitare.') : SOURCES[sourceOf(song)].about;
 }
 
 export const SOURCES: Record<SongSource, { label: string; about: string }> = {

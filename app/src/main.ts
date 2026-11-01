@@ -637,7 +637,7 @@ async function watchCable(s: AudioStatus): Promise<void> {
     live.setAutopilot(false);
     hwHud.setAutopilot(false);
   }
-  notice(t('{cable} branché : OpenSmith écoute ta guitare.', { cable }));
+  notice(t('{cable} branché : Riffroad écoute ta guitare.', { cable }));
   refreshAudio();
 }
 

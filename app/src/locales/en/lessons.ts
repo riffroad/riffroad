@@ -22,7 +22,7 @@ export const LESSONS: Record<string, string> = {
 
   // Playing and results
   'Leçon {n} · {title}': 'Lesson {n} · {title}',
-  'Leçons OpenSmith': 'OpenSmith lessons',
+  'Leçons Riffroad': 'Riffroad lessons',
   'Impossible d’ouvrir la leçon : {error}': 'Could not open the lesson: {error}',
   'Leçon suivante': 'Next lesson',
   'Leçon réussie !': 'Lesson passed!',

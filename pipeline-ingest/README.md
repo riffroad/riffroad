@@ -1,6 +1,6 @@
 # pipeline-ingest
 
-Module B d'OpenSmith : transforme une chanson ou une tablature en chart jouable (`song_chart.json`, format [../schema/chart.schema.json](../schema/chart.schema.json)).
+Module B de Riffroad : transforme une chanson ou une tablature en chart jouable (`song_chart.json`, format [../schema/chart.schema.json](../schema/chart.schema.json)).
 
 | Module | Rôle |
 |---|---|

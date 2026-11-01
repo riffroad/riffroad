@@ -112,7 +112,7 @@ export class AccountPanel {
     if (!this.status.email) {
       this.root.innerHTML = `
         <section class="account">
-          <h3>${t('Ton compte OpenSmith')}</h3>
+          <h3>${t('Ton compte Riffroad')}</h3>
           <p class="help">${intro}</p>
           <label class="row">${t('E-mail')} <input type="email" data-el="email" autocomplete="email" /></label>
           <label class="row">${t('Mot de passe')} <input type="password" data-el="password" autocomplete="current-password" /></label>
@@ -127,7 +127,7 @@ export class AccountPanel {
     }
     this.root.innerHTML = `
       <section class="account">
-        <h3>${t('Ton compte OpenSmith')}</h3>
+        <h3>${t('Ton compte Riffroad')}</h3>
         <p>${t('Connecté :')} <b data-el="who"></b></p>
         <p class="help">${intro} ${t('Sur un autre Mac, connecte-toi avec le même compte.')}</p>
         <div class="row-actions">

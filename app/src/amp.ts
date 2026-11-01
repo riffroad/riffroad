@@ -101,7 +101,7 @@ const TEMPLATE = `
 <div class="panel amp-panel">
   <div class="amp-head">
     <div class="amp-top">
-      <div class="amp-brand">Open<span>Smith</span><small>${t('Ampli')}</small></div>
+      <div class="amp-brand">Riff<span>road</span><small>${t('Ampli')}</small></div>
       <div class="amp-channels" data-el="channels"></div>
     </div>
     <div class="amp-knobs" data-el="knobs"></div>
@@ -271,7 +271,7 @@ export class AmpPanel {
   /** Whether the guitar is heard, and where. */
   hint(status: AudioStatus | null): void {
     if (!status) {
-      this.el.hint.textContent = t('Mode démo : pas d’entrée guitare ici. Lance l’application OpenSmith avec le câble guitare USB.');
+      this.el.hint.textContent = t('Mode démo : pas d’entrée guitare ici. Lance l’application Riffroad avec le câble guitare USB.');
     } else if (!status.rocksmith) {
       this.el.hint.textContent = t('Branche le câble guitare USB pour t’entendre : le micro du Mac dans ses enceintes ferait un larsen.');
     } else {

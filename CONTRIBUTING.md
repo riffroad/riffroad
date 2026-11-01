@@ -1,6 +1,6 @@
-# Contributing to OpenSmith
+# Contributing to Riffroad
 
-Thanks for wanting to help. OpenSmith is a guitar game for macOS in three parts:
+Thanks for wanting to help. Riffroad is a guitar game for macOS in three parts:
 
 | Folder | What | Language |
 |---|---|---|
@@ -10,6 +10,10 @@ Thanks for wanting to help. OpenSmith is a guitar game for macOS in three parts:
 | `schema/` | the chart format shared by all three | JSON Schema |
 
 The guitar signal never goes through Python or JavaScript: everything time-critical is Rust.
+
+The code keeps the game's former name, `opensmith`, in its identifiers (crates, commands, the chart
+format, the `~/Music/OpenSmith` folder, saved settings): renaming them would cost the players their
+library and their saves.
 
 ## Set up
 
@@ -99,7 +103,7 @@ accepted by the app.
 
 ## Licence of contributions
 
-OpenSmith is licensed under the GPL-3.0-or-later ([LICENSE](LICENSE)). By opening a pull
+Riffroad is licensed under the GPL-3.0-or-later ([LICENSE](LICENSE)). By opening a pull
 request, you agree that your contribution is licensed the same way.
 
 ## Reporting bugs

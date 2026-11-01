@@ -1,9 +1,9 @@
 /** English for main (see ../../i18n.ts). */
 export const MAIN: Record<string, string> = {
   // The page (index.html), translated in place by localize(): every text, also those that stay the same.
-  'OpenSmith': 'OpenSmith',
-  'Open': 'Open',
-  'Smith': 'Smith',
+  'Riffroad': 'Riffroad',
+  'Riff': 'Riff',
+  'road': 'road',
   'Mode démo : le jeu joue tout seul, pour voir l’autoroute de notes sans guitare.': 'Demo mode: the game plays itself, so you can watch the note highway without a guitar.',
   'Reprendre': 'Resume',
   'Carrière': 'Career',
@@ -282,7 +282,7 @@ export const MAIN: Record<string, string> = {
   'Compensation réglée à {offset} ms.': 'Compensation set to {offset} ms.',
 
   // Chart errors
-  'ce fichier n\'est pas un chart OpenSmith': 'this file is not an OpenSmith chart',
+  'ce fichier n\'est pas un chart Riffroad': 'this file is not a Riffroad chart',
   'version de chart non gérée : {version}': 'unsupported chart version: {version}',
-  '{cable} branché : OpenSmith écoute ta guitare.': '{cable} plugged in: OpenSmith is listening to your guitar.',
+  '{cable} branché : Riffroad écoute ta guitare.': '{cable} plugged in: Riffroad is listening to your guitar.',
 };
