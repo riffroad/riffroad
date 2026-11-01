@@ -47,4 +47,21 @@ export const ACCOUNT: Record<string, string> = {
     'It also changed on this Mac since the last sync. The one online is from {date}. Which one do you keep? The other will be replaced.',
   'Garder celle de ce Mac': 'Keep this Mac’s',
   'Prendre celle en ligne': 'Take the one online',
+  // Going back to an old save
+  'Revenir en arrière': 'Go back',
+  'Les cinq sauvegardes d’avant, en ligne : un mauvais choix se rattrape. Celle d’aujourd’hui rejoint la liste.':
+    'The five saves before, online: a wrong choice can be undone. Today’s joins the list.',
+  'Progression': 'Progress',
+  'Rien encore : elles arrivent avec les prochaines sauvegardes.': 'Nothing yet: they come with the next saves.',
+  'Confirmer : revenir à celle-ci': 'Confirm: go back to this one',
+  'Retour à cette sauvegarde…': 'Going back to this save…',
+  // Confirming the e-mail
+  'Confirme ton e-mail (le lien reçu) pour envoyer tes sauvegardes.': 'Confirm your e-mail (the link you received) to send your saves.',
+  'Confirme ton adresse : un lien vient de partir à {email}. Tes sauvegardes partent en ligne dès que c’est fait.':
+    'Confirm your address: a link was just sent to {email}. Your saves go online as soon as it’s done.',
+  'J’ai confirmé': 'I’ve confirmed',
+  'Renvoyer l’e-mail': 'Send the e-mail again',
+  'Compte créé : confirme ton e-mail pour envoyer tes sauvegardes.': 'Account created: confirm your e-mail to send your saves.',
+  'Pas encore confirmé : ouvre le lien de l’e-mail, puis réessaie.': 'Not confirmed yet: open the e-mail’s link, then try again.',
+  'E-mail renvoyé.': 'E-mail sent again.',
 };

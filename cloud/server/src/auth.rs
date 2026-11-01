@@ -38,6 +38,16 @@ struct Claims {
     iat: u64,
     #[serde(default)]
     auth_time: u64,
+    #[serde(default)]
+    email_verified: bool,
+}
+
+/// The player a token is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Who {
+    pub uid: String,
+    /// They clicked the link of the e-mail Firebase sent them.
+    pub verified: bool,
 }
 
 struct Keys {
@@ -67,14 +77,14 @@ impl Verifier {
         Self { project, emulator, http, keys: RwLock::new(Keys { by_id: HashMap::new(), fetched: None, max_age: Duration::ZERO }) }
     }
 
-    /// The uid of the player whose token this is.
-    pub async fn uid(&self, token: &str) -> Result<String, AuthError> {
+    /// The player whose token this is.
+    pub async fn who(&self, token: &str) -> Result<Who, AuthError> {
         if token.is_empty() {
             return Err(AuthError::Missing);
         }
         let claims = if self.emulator { self.unsigned(token)? } else { self.signed(token).await? };
         self.check(&claims)?;
-        Ok(claims.sub)
+        Ok(Who { uid: claims.sub, verified: claims.email_verified })
     }
 
     fn check(&self, c: &Claims) -> Result<(), AuthError> {
@@ -178,17 +188,20 @@ mod tests {
     async fn an_unsigned_token_is_refused_outside_the_emulator() {
         let v = Verifier::new("opensmith".into(), false, reqwest::Client::new());
         // `alg: none` is not even a header the JWT library reads.
-        assert_eq!(v.uid(&token(claims("opensmith", "abc", now() + 600))).await, Err(AuthError::Invalid("header")));
-        assert_eq!(v.uid("").await, Err(AuthError::Missing));
-        assert_eq!(v.uid("not-a-token").await, Err(AuthError::Invalid("header")));
+        assert_eq!(v.who(&token(claims("opensmith", "abc", now() + 600))).await, Err(AuthError::Invalid("header")));
+        assert_eq!(v.who("").await, Err(AuthError::Missing));
+        assert_eq!(v.who("not-a-token").await, Err(AuthError::Invalid("header")));
     }
 
     #[tokio::test]
     async fn the_emulator_token_claims_are_still_checked() {
         let v = Verifier::new("demo".into(), true, reqwest::Client::new());
-        assert_eq!(v.uid(&token(claims("demo", "abc", now() + 600))).await, Ok("abc".into()));
-        assert_eq!(v.uid(&token(claims("other", "abc", now() + 600))).await, Err(AuthError::Invalid("audience")));
-        assert_eq!(v.uid(&token(claims("demo", "abc", now() - 600))).await, Err(AuthError::Invalid("expired")));
-        assert_eq!(v.uid(&token(claims("demo", "../x", now() + 600))).await, Err(AuthError::Invalid("subject")));
+        assert_eq!(v.who(&token(claims("demo", "abc", now() + 600))).await, Ok(Who { uid: "abc".into(), verified: false }));
+        let mut confirmed = claims("demo", "abc", now() + 600);
+        confirmed["email_verified"] = true.into();
+        assert_eq!(v.who(&token(confirmed)).await.map(|w| w.verified), Ok(true));
+        assert_eq!(v.who(&token(claims("other", "abc", now() + 600))).await, Err(AuthError::Invalid("audience")));
+        assert_eq!(v.who(&token(claims("demo", "abc", now() - 600))).await, Err(AuthError::Invalid("expired")));
+        assert_eq!(v.who(&token(claims("demo", "../x", now() + 600))).await, Err(AuthError::Invalid("subject")));
     }
 }

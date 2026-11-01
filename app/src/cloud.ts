@@ -49,6 +49,8 @@ const META = 'opensmith.cloud';
 export interface CloudStatus {
   available: boolean;
   email: string | null;
+  /** Whether the e-mail is confirmed (saves go up only then); null until asked. */
+  verified: boolean | null;
 }
 
 export interface OnlineSave {
@@ -59,11 +61,21 @@ export interface OnlineSave {
 
 export type Pushed = { kind: 'saved' | 'conflict'; version: number; updatedAt: string };
 
+/** A save kept before the current one, to go back to. */
+export interface OldSave {
+  version: number;
+  updatedAt: string;
+}
+
 /** What the desktop app does online (src-tauri/src/cloud.rs). */
 export interface CloudApi {
   status(): Promise<CloudStatus>;
   pull(slot: Slot): Promise<OnlineSave | null>;
   push(slot: Slot, data: unknown, baseVersion: number): Promise<Pushed>;
+  /** The saves kept before the current one, newest first. */
+  history(slot: Slot): Promise<OldSave[]>;
+  /** An old save put back online as the current one: the save now online. */
+  restore(slot: Slot, version: number): Promise<OnlineSave>;
 }
 
 /** Which save to keep when both changed. */
@@ -168,6 +180,15 @@ export class CloudSync {
       } else result.conflict = true;
     }
     return result;
+  }
+
+  /** An old save of `slot` back on this Mac and online. This Mac's own changes go up first, so
+   * that they join the history too: going back loses nothing. The page must reload. */
+  async restore(slot: Slot, version: number): Promise<void> {
+    await this.sync(false);
+    const save = await this.api.restore(slot, version);
+    await this.write(slot, save.data);
+    this.remember(slot, save.version, JSON.stringify(await this.local(slot)));
   }
 
   /** Signed out or the account deleted: the next account starts from this Mac's saves. */

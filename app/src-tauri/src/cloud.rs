@@ -7,7 +7,7 @@
 use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
-use opensmith_cloud::{ACCOUNT_PATH, Conflict, Push, Save, Saved, is_slot, save_path};
+use opensmith_cloud::{ACCOUNT_PATH, Board, Card, Conflict, Event, Friends, Profile, Push, Rival, Save, Saved, Score, Version, history_path, is_slot, save_path};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -134,6 +134,8 @@ struct Session {
     id_token: String,
     /// When the ID token stops being valid (a minute early).
     until: Instant,
+    /// Whether the e-mail is confirmed, once asked (`check`).
+    verified: Option<bool>,
 }
 
 /// A refusal, as a short code the interface words.
@@ -147,6 +149,8 @@ pub enum CloudError {
     Auth(&'static str),
     TooLarge,
     TooManyRequests,
+    /// The server writes only for a confirmed e-mail.
+    Unverified,
     Network,
     Server(u16),
 }
@@ -159,6 +163,7 @@ impl CloudError {
             Self::Auth(code) => (*code).into(),
             Self::TooLarge => "too-large".into(),
             Self::TooManyRequests => "too-many-requests".into(),
+            Self::Unverified => "unverified".into(),
             Self::Network => "network".into(),
             Self::Server(status) => format!("server-{status}"),
         }
@@ -184,6 +189,8 @@ pub struct Status {
     /// Whether there is an online service at all.
     pub available: bool,
     pub email: Option<String>,
+    /// Whether the e-mail is confirmed; None until asked.
+    pub verified: Option<bool>,
 }
 
 /// What became of a save sent.
@@ -213,15 +220,51 @@ impl Cloud {
     }
 
     pub async fn status(&self) -> Status {
-        let email = match self.session.lock().await.as_ref() {
-            Some(s) => Some(s.kept.email.clone()),
-            None => self.keep.load().map(|k| k.email),
+        let (email, verified) = match self.session.lock().await.as_ref() {
+            Some(s) => (Some(s.kept.email.clone()), s.verified),
+            None => (self.keep.load().map(|k| k.email), None),
         };
-        Status { available: self.config.is_some(), email: email.filter(|_| self.config.is_some()) }
+        let available = self.config.is_some();
+        Status { available, email: email.filter(|_| available), verified: verified.filter(|_| available) }
     }
 
-    /// Signed in (`create`: a new account) with an e-mail and a password.
-    pub async fn sign_in(&self, email: &str, password: &str, create: bool) -> Result<Status, CloudError> {
+    /// Asks Firebase whether the e-mail is confirmed (a link clicked a moment ago counts: the
+    /// token is renewed, so the server sees it too).
+    pub async fn check(&self) -> Result<Status, CloudError> {
+        let token = self.token(true).await?;
+        let reply = self.http.post(self.config()?.identity("lookup")).json(&json!({ "idToken": token })).send().await.map_err(|_| CloudError::Network)?;
+        if !reply.status().is_success() {
+            return Err(CloudError::Server(reply.status().as_u16()));
+        }
+        let body: Value = reply.json().await.map_err(|_| CloudError::Network)?;
+        let verified = body["users"][0]["emailVerified"].as_bool().unwrap_or(false);
+        if let Some(s) = self.session.lock().await.as_mut() {
+            s.verified = Some(verified);
+        }
+        Ok(self.status().await)
+    }
+
+    /// The e-mail with the link that confirms the address, in `lang` (`fr`, `en`).
+    pub async fn send_verification(&self, lang: &str) -> Result<(), CloudError> {
+        let token = self.token(false).await?;
+        let reply = self
+            .http
+            .post(self.config()?.identity("sendOobCode"))
+            .header("X-Firebase-Locale", lang)
+            .json(&json!({ "requestType": "VERIFY_EMAIL", "idToken": token }))
+            .send()
+            .await
+            .map_err(|_| CloudError::Network)?;
+        if reply.status().is_success() {
+            return Ok(());
+        }
+        let body: Value = reply.json().await.unwrap_or(Value::Null);
+        Err(auth_error(body["error"]["message"].as_str().unwrap_or("")))
+    }
+
+    /// Signed in (`create`: a new account, sent the e-mail that confirms it, in `lang`) with an
+    /// e-mail and a password.
+    pub async fn sign_in(&self, email: &str, password: &str, create: bool, lang: &str) -> Result<Status, CloudError> {
         let config = self.config()?;
         let reply = self
             .http
@@ -239,8 +282,13 @@ impl Cloud {
         let kept = Kept { uid: field("localId"), email: field("email"), refresh_token: field("refreshToken") };
         let seconds = field("expiresIn").parse().unwrap_or(3600u64);
         self.keep.store(&kept);
-        *self.session.lock().await = Some(Session { kept, id_token: field("idToken"), until: Instant::now() + Duration::from_secs(seconds.saturating_sub(60)) });
-        Ok(self.status().await)
+        let until = Instant::now() + Duration::from_secs(seconds.saturating_sub(60));
+        *self.session.lock().await = Some(Session { kept, id_token: field("idToken"), until, verified: create.then_some(false) });
+        if create {
+            self.send_verification(lang).await?;
+            return Ok(self.status().await);
+        }
+        self.check().await
     }
 
     pub async fn sign_out(&self) {
@@ -248,12 +296,13 @@ impl Cloud {
         self.keep.clear();
     }
 
-    /// An e-mail to choose a new password.
-    pub async fn reset_password(&self, email: &str) -> Result<(), CloudError> {
+    /// An e-mail to choose a new password, in `lang` (`fr`, `en`).
+    pub async fn reset_password(&self, email: &str, lang: &str) -> Result<(), CloudError> {
         let config = self.config()?;
         let reply = self
             .http
             .post(config.identity("sendOobCode"))
+            .header("X-Firebase-Locale", lang)
             .json(&json!({ "requestType": "PASSWORD_RESET", "email": email.trim() }))
             .send()
             .await
@@ -271,7 +320,7 @@ impl Cloud {
         let mut session = self.session.lock().await;
         if session.is_none() {
             let kept = self.keep.load().ok_or(CloudError::SignedOut)?;
-            *session = Some(Session { kept, id_token: String::new(), until: Instant::now() });
+            *session = Some(Session { kept, id_token: String::new(), until: Instant::now(), verified: None });
         }
         let s = session.as_mut().expect("session");
         if !fresh && Instant::now() < s.until {
@@ -319,6 +368,7 @@ impl Cloud {
             }
             return match reply.status().as_u16() {
                 401 => Err(CloudError::SignedOut),
+                403 => Err(CloudError::Unverified),
                 413 => Err(CloudError::TooLarge),
                 429 => Err(CloudError::TooManyRequests),
                 _ => Ok(reply),
@@ -351,6 +401,111 @@ impl Cloud {
             409 => reply.json().await.map(Pushed::Conflict).map_err(|_| CloudError::Network),
             s => Err(CloudError::Server(s)),
         }
+    }
+
+    /// The saves kept before the current one in `slot`, newest first.
+    pub async fn history(&self, slot: &str) -> Result<Vec<Version>, CloudError> {
+        if !is_slot(slot) {
+            return Err(CloudError::Server(404));
+        }
+        let reply = self.send(|http, server| http.get(format!("{server}{}", history_path(slot)))).await?;
+        match reply.status().as_u16() {
+            200 => reply.json().await.map_err(|_| CloudError::Network),
+            s => Err(CloudError::Server(s)),
+        }
+    }
+
+    /// Version `version` of `slot` put back as its save (the one it replaces joins the history):
+    /// the save now online.
+    pub async fn restore(&self, slot: &str, version: u64) -> Result<Save, CloudError> {
+        if !is_slot(slot) {
+            return Err(CloudError::Server(404));
+        }
+        let reply = self.send(|http, server| http.get(format!("{server}{}/{version}", history_path(slot)))).await?;
+        let old: Save = match reply.status().as_u16() {
+            200 => reply.json().await.map_err(|_| CloudError::Network)?,
+            s => return Err(CloudError::Server(s)),
+        };
+        let current = self.pull(slot).await?.map_or(0, |s| s.version);
+        match self.push(slot, old.data.clone(), current).await? {
+            Pushed::Saved(s) => Ok(Save { version: s.version, updated_at: s.updated_at, data: old.data }),
+            // Another Mac saved in between: asked again, on the newer save.
+            Pushed::Conflict(_) => Err(CloudError::Server(409)),
+        }
+    }
+
+    /// A call to the server: its answer as `T`, or why not.
+    async fn call<T: serde::de::DeserializeOwned>(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<T, CloudError> {
+        let reply = self
+            .send(|http, server| {
+                let r = http.request(method.clone(), format!("{server}{path}"));
+                match body {
+                    Some(b) => r.json(b),
+                    None => r,
+                }
+            })
+            .await?;
+        match reply.status().as_u16() {
+            200 => reply.json().await.map_err(|_| CloudError::Network),
+            s => Err(CloudError::Server(s)),
+        }
+    }
+
+    /// The events on now or soon (no account needed).
+    pub async fn events(&self) -> Result<Vec<Event>, CloudError> {
+        let reply = self.http.get(format!("{}/v1/events", self.config()?.server)).send().await.map_err(|_| CloudError::Network)?;
+        match reply.status().as_u16() {
+            200 => reply.json().await.map_err(|_| CloudError::Network),
+            s => Err(CloudError::Server(s)),
+        }
+    }
+
+    /// The name the boards show (none yet: None).
+    pub async fn profile(&self) -> Result<Profile, CloudError> {
+        self.call(reqwest::Method::GET, "/v1/profile", None).await
+    }
+
+    /// A name chosen for the boards (400: not a name the boards take).
+    pub async fn set_name(&self, name: &str) -> Result<Profile, CloudError> {
+        self.call(reqwest::Method::PUT, "/v1/profile", Some(&json!({ "name": name.trim() }))).await
+    }
+
+    /// This week's challenge and its board.
+    pub async fn board(&self) -> Result<Board, CloudError> {
+        self.call(reqwest::Method::GET, "/v1/challenge", None).await
+    }
+
+    /// The player's friend code and card, and their friends, best week first.
+    pub async fn friends(&self) -> Result<Friends, CloudError> {
+        self.call(reqwest::Method::GET, "/v1/friends", None).await
+    }
+
+    /// A friend followed by their code (404: no such code; 400: one's own).
+    pub async fn add_friend(&self, code: &str) -> Result<Friends, CloudError> {
+        self.call(reqwest::Method::POST, "/v1/friends", Some(&json!({ "code": code }))).await
+    }
+
+    pub async fn remove_friend(&self, code: &str) -> Result<Friends, CloudError> {
+        let code: String = code.chars().filter(char::is_ascii_alphanumeric).collect();
+        self.call(reqwest::Method::DELETE, &format!("/v1/friends/{code}"), None).await
+    }
+
+    /// The player's card, as friends see it.
+    pub async fn set_card(&self, card: &Card) -> Result<(), CloudError> {
+        let body = serde_json::to_value(card).map_err(|_| CloudError::Network)?;
+        let reply = self.send(|http, server| http.put(format!("{server}/v1/card")).json(&body)).await?;
+        if reply.status().is_success() { Ok(()) } else { Err(CloudError::Server(reply.status().as_u16())) }
+    }
+
+    /// The run to race on this week's challenge (none when first).
+    pub async fn rival(&self) -> Result<Option<Rival>, CloudError> {
+        self.call(reqwest::Method::GET, "/v1/challenge/rival", None).await
+    }
+
+    /// A run of the challenge sent: the board with it (409: a name is needed first).
+    pub async fn submit(&self, run: &Score) -> Result<Board, CloudError> {
+        let body = serde_json::to_value(run).map_err(|_| CloudError::Network)?;
+        self.call(reqwest::Method::POST, "/v1/challenge", Some(&body)).await
     }
 
     /// The account deleted: its saves on the server, then the sign-in itself.
@@ -392,9 +547,9 @@ mod tests {
     #[tokio::test]
     async fn without_a_project_the_account_stays_hidden() {
         let cloud = Cloud::new(None, Box::new(Memory::default()));
-        assert_eq!(cloud.status().await, Status { available: false, email: None });
+        assert_eq!(cloud.status().await, Status { available: false, email: None, verified: None });
         assert_eq!(cloud.pull("career").await, Err(CloudError::Unavailable));
-        assert_eq!(cloud.sign_in("a@b.c", "secret-123", true).await, Err(CloudError::Unavailable));
+        assert_eq!(cloud.sign_in("a@b.c", "secret-123", true, "fr").await, Err(CloudError::Unavailable));
     }
 
     /// The app against the real server and the Firebase emulators, in `cloud/`:
@@ -414,22 +569,56 @@ mod tests {
 
         let keychain = Arc::new(Memory::default());
         let mac_a = Cloud::new(Some(config.clone()), Box::new(keychain.clone()));
-        assert_eq!(mac_a.status().await, Status { available: true, email: None });
-        assert_eq!(mac_a.sign_in(&email, "123", true).await, Err(CloudError::Auth("weak-password")));
-        assert_eq!(mac_a.sign_in(&email, "secret-123", true).await.unwrap().email.as_deref(), Some(email.as_str()));
-        assert_eq!(mac_a.sign_in(&email, "secret-123", true).await, Err(CloudError::Auth("email-exists")));
+        assert_eq!(mac_a.status().await, Status { available: true, email: None, verified: None });
+        assert_eq!(mac_a.sign_in(&email, "123", true, "fr").await, Err(CloudError::Auth("weak-password")));
+        let created = mac_a.sign_in(&email, "secret-123", true, "fr").await.unwrap();
+        assert_eq!((created.email.as_deref(), created.verified), (Some(email.as_str()), Some(false)));
+        assert_eq!(mac_a.sign_in(&email, "secret-123", true, "fr").await, Err(CloudError::Auth("email-exists")));
         assert_eq!(mac_a.pull("career").await, Ok(None));
+        // Nothing goes up before the e-mail is confirmed.
+        assert_eq!(mac_a.push("career", json!({ "act": 1 }), 0).await, Err(CloudError::Unverified));
+        confirm(&email).await;
+        assert_eq!(mac_a.check().await.unwrap().verified, Some(true));
         let Pushed::Saved(first) = mac_a.push("career", json!({ "act": 1 }), 0).await.unwrap() else { panic!("not saved") };
         assert_eq!(first.version, 1);
 
         let mac_b = Cloud::new(Some(config.clone()), Box::new(Memory::default()));
-        assert_eq!(mac_b.sign_in(&email, "wrong-password", false).await, Err(CloudError::Auth("invalid-credentials")));
-        mac_b.sign_in(&email, "secret-123", false).await.unwrap();
+        assert_eq!(mac_b.sign_in(&email, "wrong-password", false, "en").await, Err(CloudError::Auth("invalid-credentials")));
+        assert_eq!(mac_b.sign_in(&email, "secret-123", false, "en").await.unwrap().verified, Some(true));
         let online = mac_b.pull("career").await.unwrap().unwrap();
         assert_eq!((online.version, online.data), (1, json!({ "act": 1 })));
         assert!(matches!(mac_b.push("career", json!({ "act": 2 }), 1).await, Ok(Pushed::Saved(Saved { version: 2, .. }))));
         // Mac A, still on version 1, is told instead of overwriting.
         assert!(matches!(mac_a.push("career", json!({ "act": 9 }), 1).await, Ok(Pushed::Conflict(Conflict { version: 2, .. }))));
+
+        // The save Mac A was told about is not lost: it can be put back.
+        let kept = mac_a.history("career").await.unwrap();
+        assert_eq!(kept.iter().map(|v| v.version).collect::<Vec<_>>(), [1]);
+        let back = mac_a.restore("career", 1).await.unwrap();
+        assert_eq!((back.version, back.data), (3, json!({ "act": 1 })));
+        assert!(matches!(mac_b.push("career", json!({ "act": 2 }), 3).await, Ok(Pushed::Saved(Saved { version: 4, .. }))));
+
+        // The events, signed in or not.
+        assert!(Cloud::new(Some(config.clone()), Box::new(Memory::default())).events().await.is_ok());
+
+        // A name, then a run of this week's challenge: on the board.
+        assert_eq!(mac_a.profile().await.unwrap().name, None);
+        assert_eq!(mac_a.set_name("x").await, Err(CloudError::Server(400)));
+        let week = mac_a.board().await.unwrap().challenge;
+        let run = Score { week: week.week, song: week.song.clone(), level: week.level.clone(), score: 4_999_000, accuracy: 0.97, trace: vec![0, 2_000_000, 4_999_000] };
+        assert_eq!(mac_a.submit(&run).await, Err(CloudError::Server(409)));
+        assert_eq!(mac_a.set_name("Mac A").await.unwrap().name.as_deref(), Some("Mac A"));
+        let board = mac_a.submit(&run).await.unwrap();
+        assert_eq!(board.me.map(|e| (e.name, e.score)), Some(("Mac A".to_string(), 4_999_000)));
+        // A card, and a friend code to give.
+        let card = Card { band: "Les A".into(), act: 1, fans: 120, week: week.week, week_fans: 30 };
+        mac_a.set_card(&card).await.unwrap();
+        let mine = mac_a.friends().await.unwrap();
+        assert_eq!((mine.code.len(), mine.me), (6, Some(card)));
+        assert_eq!(mac_a.add_friend(&mine.code).await, Err(CloudError::Server(400)));
+
+        // The same player on Mac B leads that board: no run above theirs to race.
+        assert_eq!(mac_b.rival().await.unwrap(), None);
 
         // Mac A launched again: signed in from the keychain, a new token from the kept one.
         let relaunched = Cloud::new(Some(config.clone()), Box::new(keychain.clone()));
@@ -439,6 +628,31 @@ mod tests {
         relaunched.delete_account().await.unwrap();
         assert_eq!(relaunched.status().await.email, None);
         assert_eq!(keychain.load(), None);
-        assert_eq!(mac_b.sign_in(&email, "secret-123", false).await, Err(CloudError::Auth("invalid-credentials")));
+        assert_eq!(mac_b.sign_in(&email, "secret-123", false, "en").await, Err(CloudError::Auth("invalid-credentials")));
+    }
+
+    /// The link of the e-mail clicked (the Auth emulator's own admin call).
+    async fn confirm(email: &str) {
+        let host = std::env::var("FIREBASE_AUTH_EMULATOR_HOST").unwrap();
+        let project = std::env::var("GCLOUD_PROJECT").unwrap();
+        let http = reqwest::Client::new();
+        let found: Value = http
+            .post(format!("http://{host}/identitytoolkit.googleapis.com/v1/projects/{project}/accounts:lookup"))
+            .bearer_auth("owner")
+            .json(&json!({ "email": [email] }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        http.post(format!("http://{host}/identitytoolkit.googleapis.com/v1/projects/{project}/accounts:update"))
+            .bearer_auth("owner")
+            .json(&json!({ "localId": found["users"][0]["localId"], "emailVerified": true }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
     }
 }

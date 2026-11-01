@@ -349,8 +349,8 @@ async fn cloud_status(cloud: State<'_, cloud::Cloud>) -> Result<cloud::Status, S
 }
 
 #[tauri::command]
-async fn cloud_sign_in(cloud: State<'_, cloud::Cloud>, email: String, password: String, create: bool) -> Result<cloud::Status, String> {
-    cloud.sign_in(&email, &password, create).await.map_err(|e| e.code())
+async fn cloud_sign_in(cloud: State<'_, cloud::Cloud>, email: String, password: String, create: bool, lang: String) -> Result<cloud::Status, String> {
+    cloud.sign_in(&email, &password, create, &lang).await.map_err(|e| e.code())
 }
 
 #[tauri::command]
@@ -360,8 +360,69 @@ async fn cloud_sign_out(cloud: State<'_, cloud::Cloud>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn cloud_reset_password(cloud: State<'_, cloud::Cloud>, email: String) -> Result<(), String> {
-    cloud.reset_password(&email).await.map_err(|e| e.code())
+async fn cloud_reset_password(cloud: State<'_, cloud::Cloud>, email: String, lang: String) -> Result<(), String> {
+    cloud.reset_password(&email, &lang).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_events(cloud: State<'_, cloud::Cloud>) -> Result<Vec<opensmith_cloud::Event>, String> {
+    cloud.events().await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_profile(cloud: State<'_, cloud::Cloud>) -> Result<opensmith_cloud::Profile, String> {
+    cloud.profile().await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_set_name(cloud: State<'_, cloud::Cloud>, name: String) -> Result<opensmith_cloud::Profile, String> {
+    cloud.set_name(&name).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_board(cloud: State<'_, cloud::Cloud>) -> Result<opensmith_cloud::Board, String> {
+    cloud.board().await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_friends(cloud: State<'_, cloud::Cloud>) -> Result<opensmith_cloud::Friends, String> {
+    cloud.friends().await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_add_friend(cloud: State<'_, cloud::Cloud>, code: String) -> Result<opensmith_cloud::Friends, String> {
+    cloud.add_friend(&code).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_remove_friend(cloud: State<'_, cloud::Cloud>, code: String) -> Result<opensmith_cloud::Friends, String> {
+    cloud.remove_friend(&code).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_set_card(cloud: State<'_, cloud::Cloud>, card: opensmith_cloud::Card) -> Result<(), String> {
+    cloud.set_card(&card).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_rival(cloud: State<'_, cloud::Cloud>) -> Result<Option<opensmith_cloud::Rival>, String> {
+    cloud.rival().await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_submit(cloud: State<'_, cloud::Cloud>, run: opensmith_cloud::Score) -> Result<opensmith_cloud::Board, String> {
+    cloud.submit(&run).await.map_err(|e| e.code())
+}
+
+/// Whether the e-mail is confirmed now (after its link was clicked).
+#[tauri::command]
+async fn cloud_check(cloud: State<'_, cloud::Cloud>) -> Result<cloud::Status, String> {
+    cloud.check().await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_send_verification(cloud: State<'_, cloud::Cloud>, lang: String) -> Result<(), String> {
+    cloud.send_verification(&lang).await.map_err(|e| e.code())
 }
 
 #[tauri::command]
@@ -372,6 +433,16 @@ async fn cloud_pull(cloud: State<'_, cloud::Cloud>, slot: String) -> Result<Opti
 #[tauri::command]
 async fn cloud_push(cloud: State<'_, cloud::Cloud>, slot: String, data: serde_json::Value, base_version: u64) -> Result<cloud::Pushed, String> {
     cloud.push(&slot, data, base_version).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_history(cloud: State<'_, cloud::Cloud>, slot: String) -> Result<Vec<opensmith_cloud::Version>, String> {
+    cloud.history(&slot).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_restore(cloud: State<'_, cloud::Cloud>, slot: String, version: u64) -> Result<opensmith_cloud::Save, String> {
+    cloud.restore(&slot, version).await.map_err(|e| e.code())
 }
 
 #[tauri::command]
@@ -1072,6 +1143,20 @@ pub fn run() {
             cloud_reset_password,
             cloud_pull,
             cloud_push,
+            cloud_history,
+            cloud_restore,
+            cloud_check,
+            cloud_send_verification,
+            cloud_events,
+            cloud_profile,
+            cloud_set_name,
+            cloud_board,
+            cloud_submit,
+            cloud_rival,
+            cloud_friends,
+            cloud_add_friend,
+            cloud_remove_friend,
+            cloud_set_card,
             cloud_delete_account,
             library,
             load_song,

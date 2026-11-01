@@ -5,14 +5,17 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { Choice, CloudApi, CloudStatus, OnlineSave, Slot } from './cloud';
+import { SLOTS, type Choice, type CloudApi, type CloudStatus, type OldSave, type OnlineSave, type Slot } from './cloud';
 import { lang, t } from './i18n';
 
 /** The desktop app's side (src-tauri/src/cloud.rs). */
-export const tauriCloud: CloudApi = {
+export const tauriCloud: CloudApi & { check(): Promise<CloudStatus> } = {
   status: () => invoke<CloudStatus>('cloud_status'),
+  check: () => invoke<CloudStatus>('cloud_check'),
   pull: (slot) => invoke<OnlineSave | null>('cloud_pull', { slot }),
   push: (slot, data, baseVersion) => invoke('cloud_push', { slot, data, baseVersion }),
+  history: (slot) => invoke<OldSave[]>('cloud_history', { slot }),
+  restore: (slot, version) => invoke<OnlineSave>('cloud_restore', { slot, version }),
 };
 
 /** A refusal from the desktop app, in words. */
@@ -36,6 +39,8 @@ export function cloudError(code: unknown): string {
       return t('Trop de synchronisations d’un coup : réessaie dans une minute.');
     case 'too-large':
       return t('Sauvegarde trop grosse pour être envoyée.');
+    case 'unverified':
+      return t('Confirme ton e-mail (le lien reçu) pour envoyer tes sauvegardes.');
     default:
       return t('Le service en ligne ne répond pas pour l’instant.');
   }
@@ -73,27 +78,33 @@ export interface AccountHooks {
   sync(): Promise<string>;
   /** Signed out or deleted: this Mac forgets what it synced. */
   signedOut(): void;
+  /** An old save put back (the page then reloads). */
+  restore(slot: Slot, version: number): Promise<void>;
 }
 
 export class AccountPanel {
-  private status: CloudStatus = { available: false, email: null };
+  private status: CloudStatus = { available: false, email: null, verified: null };
   private confirmDelete = 0;
+  /** The old save asked to go back to, until a second click confirms it. */
+  private confirmRestore = { key: '', at: 0 };
 
   constructor(
     private readonly root: HTMLElement,
     private readonly hooks: AccountHooks,
   ) {
     root.addEventListener('click', (e) => {
-      const action = (e.target as HTMLElement).closest<HTMLElement>('[data-account]')?.dataset.account;
-      if (action) {
+      const button = (e.target as HTMLElement).closest<HTMLElement>('[data-account]');
+      if (button?.dataset.account) {
         e.preventDefault();
-        void this.act(action);
+        void this.act(button.dataset.account, button);
       }
     });
   }
 
   async open(): Promise<void> {
-    this.status = await tauriCloud.status().catch(() => ({ available: false, email: null }));
+    this.status = await tauriCloud.status().catch(() => ({ available: false, email: null, verified: null }));
+    // Signed in: whether the e-mail is confirmed by now.
+    if (this.status.email && this.status.verified !== true) this.status = await tauriCloud.check().catch(() => this.status);
     this.render();
   }
 
@@ -125,9 +136,20 @@ export class AccountPanel {
         </section>`;
       return;
     }
+    const confirm =
+      this.status.verified === false
+        ? `<div class="cloud-verify">
+            <p>${t('Confirme ton adresse : un lien vient de partir à {email}. Tes sauvegardes partent en ligne dès que c’est fait.', { email: '<b data-el="to"></b>' })}</p>
+            <div class="row-actions">
+              <button class="action primary small" data-account="check">${t('J’ai confirmé')}</button>
+              <button class="action small" data-account="resend">${t('Renvoyer l’e-mail')}</button>
+            </div>
+          </div>`
+        : '';
     this.root.innerHTML = `
       <section class="account">
         <h3>${t('Ton compte Riffroad')}</h3>
+        ${confirm}
         <p>${t('Connecté :')} <b data-el="who"></b></p>
         <p class="help">${intro} ${t('Sur un autre Mac, connecte-toi avec le même compte.')}</p>
         <div class="row-actions">
@@ -137,24 +159,62 @@ export class AccountPanel {
         <p class="status" data-el="message"></p>
       </section>
       <section class="account">
+        <h3>${t('Revenir en arrière')}</h3>
+        <p class="help">${t('Les cinq sauvegardes d’avant, en ligne : un mauvais choix se rattrape. Celle d’aujourd’hui rejoint la liste.')}</p>
+        <div data-el="history"><p class="help">${t('Chargement…')}</p></div>
+      </section>
+      <section class="account">
         <h3>${t('Supprimer le compte')}</h3>
         <p class="help">${t('Tes sauvegardes en ligne et ton compte sont effacés ; celles de ce Mac restent.')}</p>
         <button class="action small danger" data-account="delete">${t('Supprimer mon compte')}</button>
       </section>`;
     this.el('who').textContent = this.status.email;
+    this.el('to')?.replaceChildren(this.status.email ?? '');
+    void this.showHistory();
   }
 
-  private async act(action: string): Promise<void> {
+  /** Each slot's old saves, newest first, each one a button to go back to it. */
+  private async showHistory(): Promise<void> {
+    const box = this.el('history');
+    const label: Record<Slot, string> = { career: t('Carrière'), progress: t('Progression') };
+    try {
+      const lists = await Promise.all(SLOTS.map(async (slot) => [slot, await tauriCloud.history(slot)] as const));
+      const rows = lists.flatMap(([slot, olds]) =>
+        olds.map((old) => {
+          const b = document.createElement('button');
+          b.className = 'action small';
+          b.dataset.account = 'restore';
+          b.dataset.slot = slot;
+          b.dataset.version = String(old.version);
+          b.textContent = `${label[slot]} · ${when(old.updatedAt)}`;
+          return b;
+        }),
+      );
+      box.replaceChildren(...(rows.length ? rows : [Object.assign(document.createElement('p'), { className: 'help', textContent: t('Rien encore : elles arrivent avec les prochaines sauvegardes.') })]));
+      box.className = 'cloud-versions';
+    } catch (e) {
+      box.textContent = cloudError(e);
+    }
+  }
+
+  private async act(action: string, target: HTMLElement): Promise<void> {
     const email = this.el<HTMLInputElement>('email')?.value ?? '';
     const password = this.el<HTMLInputElement>('password')?.value ?? '';
     try {
       if (action === 'sign-in' || action === 'create') {
         this.say(t('Connexion…'));
-        this.status = await invoke<CloudStatus>('cloud_sign_in', { email, password, create: action === 'create' });
+        this.status = await invoke<CloudStatus>('cloud_sign_in', { email, password, create: action === 'create', lang: lang() });
         this.render();
-        this.say(await this.hooks.sync());
+        this.say(this.status.verified === false ? t('Compte créé : confirme ton e-mail pour envoyer tes sauvegardes.') : await this.hooks.sync());
+      } else if (action === 'check') {
+        this.status = await tauriCloud.check();
+        this.render();
+        this.say(this.status.verified ? await this.hooks.sync() : t('Pas encore confirmé : ouvre le lien de l’e-mail, puis réessaie.'), !this.status.verified);
+      } else if (action === 'resend') {
+        await invoke('cloud_send_verification', { lang: lang() });
+        this.say(t('E-mail renvoyé.'));
       } else if (action === 'reset') {
-        await invoke('cloud_reset_password', { email });
+        await invoke('cloud_reset_password', { email, lang: lang() });
         this.say(t('Un e-mail pour choisir un nouveau mot de passe est parti.'));
       } else if (action === 'sync') {
         this.say(t('Synchronisation…'));
@@ -163,6 +223,19 @@ export class AccountPanel {
         await invoke('cloud_sign_out');
         this.hooks.signedOut();
         await this.open();
+      } else if (action === 'restore') {
+        const button = target as HTMLElement;
+        const slot = button.dataset.slot as Slot;
+        const version = Number(button.dataset.version);
+        // A second click within five seconds confirms.
+        const key = `${slot}:${version}`;
+        if (this.confirmRestore.key !== key || Date.now() - this.confirmRestore.at > 5000) {
+          this.confirmRestore = { key, at: Date.now() };
+          button.textContent = t('Confirmer : revenir à celle-ci');
+          return;
+        }
+        this.say(t('Retour à cette sauvegarde…'));
+        await this.hooks.restore(slot, version);
       } else if (action === 'delete') {
         // A second click within five seconds confirms.
         if (Date.now() - this.confirmDelete > 5000) {

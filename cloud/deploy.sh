@@ -28,6 +28,8 @@ gc services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry
 
 echo "== Firestore (europe-west1), closed to direct access"
 gc firestore databases describe --database='(default)' >/dev/null 2>&1 || gc firestore databases create --location "$REGION"
+# The whole database can be read back as it was at any minute of the last seven days.
+gc firestore databases update --database='(default)' --enable-pitr >/dev/null
 firebase deploy --only firestore --project "$P" --non-interactive
 
 echo "== Sign-in by e-mail and password"

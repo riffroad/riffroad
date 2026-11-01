@@ -49,3 +49,31 @@ kept) and put on Cloud Run, its address unchanged. No key is stored on GitHub: G
 repository's own tokens, for its main branch only (workload identity federation), and lends them
 an account that can push an image and update the service, nothing else. `deploy.sh` stays for
 the first setup and for Firestore's rules.
+
+Once per project too: an e-mail when the server breaks (server errors, or slow answers for ten
+minutes, read from real requests only: the server still sleeps at zero instances), and the
+e-mails Firebase sends signed « Riffroad » (the app asks for them in the player's language):
+
+```bash
+./alerts.sh <project-id> <e-mail>
+python3 emails.py <project-id>
+```
+
+## Events
+
+`server/events.json` says what is on for every player: a festival that pays the career's gigs
+more (`"career": { "fans": 1.5, "money": 1.5 }`, 1 to 3), or a weekly challenge picked by hand
+(`"challenge": { "song": …, "level": … }`, a shipped song, the event spanning its week from
+Monday 00:00 UTC). Dates are `YYYY-MM-DDTHH:MM:SSZ`; titles and texts in French and English. The
+file is built into the server: edit it, push, and the deployment carries it, once the tests have
+checked every event. The app hears of events on now or within two weeks.
+
+## What the server keeps
+
+Per player (`users/{uid}`): the two saves and the five before each (`saves/{slot}`, `history`),
+a name for the boards, a friend code (`codes/{code}`), a card for friends (band, act, fans, fans
+won this week), the friends followed. Per week (`challenges/w{week}/scores/{uid}`): each
+player's best run of the weekly challenge and its trace (points at each second, the ghost
+others race). All of it goes with the account (`DELETE /v1/account`). Firestore can be read
+back as it was at any minute of the last seven days (point-in-time recovery).
+

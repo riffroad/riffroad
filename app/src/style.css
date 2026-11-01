@@ -4772,3 +4772,190 @@ body:not(.live) .live-only {
 .perf-row.bad {
   color: #f87171;
 }
+
+/* Settings → Account: the e-mail to confirm, and the saves to go back to. */
+.cloud-verify {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 209, 102, 0.45);
+  border-radius: 10px;
+  background: rgba(255, 209, 102, 0.07);
+}
+.cloud-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Days played: the streak under the menu's title, and the twelve weeks in the trophies. */
+.menu-brand .menu-streak {
+  margin-top: 6px;
+  color: var(--gold);
+  font-weight: 700;
+}
+.menu-brand .menu-streak.at-risk {
+  color: #fb923c;
+}
+.practice-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  margin: 12px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.practice-head {
+  display: grid;
+  gap: 2px;
+}
+.practice-head b {
+  color: var(--gold);
+  font-size: 22px;
+}
+.practice-head span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.practice-grid {
+  display: flex;
+  gap: 3px;
+}
+.practice-grid div {
+  display: grid;
+  gap: 3px;
+}
+.practice-grid i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: rgba(140, 165, 255, 0.08);
+}
+.practice-grid i.l0 {
+  background: rgba(255, 209, 102, 0.25);
+}
+.practice-grid i.l1 {
+  background: rgba(255, 209, 102, 0.5);
+}
+.practice-grid i.l2 {
+  background: rgba(255, 209, 102, 0.75);
+}
+.practice-grid i.l3 {
+  background: var(--gold);
+}
+.practice-grid i.future {
+  background: transparent;
+}
+
+/* The weekly challenge (world.ts). */
+.world-panel {
+  width: min(720px, 100%);
+}
+.world-left {
+  margin-left: auto;
+  color: var(--gold);
+  font-weight: 700;
+}
+.world-song {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin: 12px 0 18px;
+}
+.world-art {
+  width: 120px;
+  flex: none;
+}
+.world-art .cover {
+  width: 120px;
+  aspect-ratio: 1;
+}
+.world-what {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.world-what b {
+  font-size: 18px;
+}
+.world-what span {
+  color: var(--muted);
+}
+.world-name {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.world-top {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.world-top li {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.world-top li.me {
+  border: 1px solid rgba(255, 209, 102, 0.5);
+  background: rgba(255, 209, 102, 0.08);
+}
+.world-top li b {
+  color: var(--gold);
+}
+.world-score {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An event on (events.ts), under the menu's title. */
+.menu-brand .menu-event {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--gold);
+  border-radius: 4px;
+  background: rgba(255, 209, 102, 0.08);
+  font-size: 13px;
+}
+.menu-brand .menu-event b {
+  color: var(--gold);
+}
+
+/* The ghost raced in Score Attack (ghost.ts), under its badge. */
+.ghost-badge {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(4, 8, 20, 0.7);
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+body:not(.in-attack) .ghost-badge {
+  display: none;
+}
+.ghost-badge.ahead b {
+  color: var(--good);
+}
+.ghost-badge.behind b {
+  color: #f87171;
+}
+
+/* The battle of the bands (world.ts): a remove button at the end of a friend's row. */
+.world-friends .world-top li {
+  grid-template-columns: 36px 1fr auto auto;
+  align-items: center;
+}
+.world-friends {
+  margin-top: 18px;
+}

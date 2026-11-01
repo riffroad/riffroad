@@ -22,6 +22,8 @@ export interface SongProgress {
   mastery: number;
   /** Score Attack: best runs by difficulty (key of ATTACK_LEVELS), best first. */
   attack?: Record<string, AttackScore[]>;
+  /** The best Score Attack run of each level, its points at each second (ghost.ts). */
+  ghosts?: Record<string, number[]>;
 }
 
 /** A finished Score Attack run, as kept in the song's high scores. */
@@ -186,6 +188,8 @@ export function recordAttack(
   results: ReadonlyMap<number, PhraseResult>,
   failed: boolean,
   when = new Date(),
+  /** The run's points at each second: kept, as the ghost to race, when it is the best. */
+  trace?: readonly number[],
 ): AttackOutcome {
   const before = previous ?? emptyProgress();
   const p: SongProgress = {
@@ -209,6 +213,7 @@ export function recordAttack(
       rank = index + 1;
     }
   }
+  if (rank === 1 && trace?.length) p.ghosts = { ...before.ghosts, [difficulty]: [...trace] };
   p.attack![difficulty] = scores;
   return { progress: p, rank, scores, masteryBefore: before.mastery, masteryAfter: p.mastery };
 }

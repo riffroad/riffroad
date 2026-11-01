@@ -1,0 +1,13 @@
+[
+  {
+    "id": "festival-automne-2026",
+    "starts": "2026-11-06T17:00:00Z",
+    "ends": "2026-11-09T05:00:00Z",
+    "title": { "fr": "Festival d'automne", "en": "Autumn festival" },
+    "text": {
+      "fr": "Ce week-end, chaque concert de la carrière rapporte 50 % de fans et de cachet en plus.",
+      "en": "This weekend, every career gig brings 50 % more fans and fees."
+    },
+    "career": { "fans": 1.5, "money": 1.5 }
+  }
+]

@@ -5,6 +5,16 @@
       "collectionGroup": "saves",
       "fieldPath": "data",
       "indexes": []
+    },
+    {
+      "collectionGroup": "history",
+      "fieldPath": "data",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "scores",
+      "fieldPath": "trace",
+      "indexes": []
     }
   ]
 }

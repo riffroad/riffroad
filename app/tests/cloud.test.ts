@@ -4,16 +4,24 @@ import { CloudSync, storagePart, type Choice, type CloudApi, type OnlineSave, ty
 /** The server's rule (cloud/server): a save written only over the version it was based on. */
 class Server {
   saves = new Map<Slot, OnlineSave>();
+  history = new Map<Slot, OnlineSave[]>();
   api(): CloudApi {
     return {
-      status: async () => ({ available: true, email: 'me@example.com' }),
+      status: async () => ({ available: true, email: 'me@example.com', verified: true }),
       pull: async (slot) => structuredClone(this.saves.get(slot) ?? null),
       push: async (slot, data, baseVersion) => {
         const now = this.saves.get(slot);
         if (now && now.version !== baseVersion) return { kind: 'conflict', version: now.version, updatedAt: now.updatedAt };
         const next = { version: (now?.version ?? 0) + 1, updatedAt: `t${(now?.version ?? 0) + 1}`, data: structuredClone(data) };
+        if (now) this.history.set(slot, [now, ...(this.history.get(slot) ?? [])].slice(0, 5));
         this.saves.set(slot, next);
         return { kind: 'saved', version: next.version, updatedAt: next.updatedAt };
+      },
+      history: async (slot) => (this.history.get(slot) ?? []).map(({ version, updatedAt }) => ({ version, updatedAt })),
+      restore: async (slot, version) => {
+        const old = (this.history.get(slot) ?? []).find((s) => s.version === version)!;
+        const r = await this.api().push(slot, old.data, this.saves.get(slot)?.version ?? 0);
+        return { version: r.version, updatedAt: r.updatedAt, data: structuredClone(old.data) };
       },
     };
   }
@@ -117,5 +125,23 @@ describe('saves kept online', () => {
     fresh.store.set('opensmith.progress', '{}');
     expect((await fresh.sync.sync(true)).pulled).toEqual(['progress']);
     expect(fresh.asked).toEqual([]);
+  });
+
+  it('goes back to an old save without losing this Mac’s latest one', async () => {
+    const server = new Server();
+    const a = new Mac(server);
+    a.career(1);
+    await a.sync.sync(true);
+    a.career(2);
+    await a.sync.sync(false);
+    // A change not synced yet: it goes up first, so going back keeps it in the history.
+    a.career(3);
+    await a.sync.restore('career', 1);
+    expect(a.act()).toBe(1);
+    expect(server.saves.get('career')).toMatchObject({ version: 4, data: { 'opensmith.career': { act: 1 } } });
+    expect(server.history.get('career')!.map((s) => s.version)).toEqual([3, 2, 1]);
+    expect((server.history.get('career')![0].data as Record<string, { act: number }>)['opensmith.career'].act).toBe(3);
+    // Synced: nothing left to send.
+    expect(await a.sync.sync(true)).toEqual({ pulled: [], pushed: [], conflict: false });
   });
 });

@@ -1257,7 +1257,7 @@ export function concludeGig(
   offer: Offer,
   songs: GigSong[],
   outcome: GigOutcome,
-  extra: { encore?: GigSong | null; pauses?: number; when?: Date } = {},
+  extra: { encore?: GigSong | null; pauses?: number; when?: Date; boost?: { fans: number; money: number } } = {},
 ): { career: Career; record: GigRecord; actUp: boolean; souvenir: Souvenir } {
   const satisfaction = songs.length ? songs.reduce((sum, s) => sum + s.crowd, 0) / songs.length : 0;
   const played = outcome === 'played';
@@ -1281,8 +1281,10 @@ export function concludeGig(
   // never saw it (more fans, a small fee).
   // A charity gig: no fee, its costs paid by the band, a crowd that tells everyone.
   const charity = !!offer.charity;
-  const fans = Math.round((fansFor(offer.audience, satisfaction, outcome, effort * form * band * hypeFans(c.hype) * (offer.invited ? 1.3 : 1) * (charity ? 1.6 : 1)) + (bonus?.fans ?? 0)) * (offer.scout && played ? 2 : 1));
-  const pay = (played && !charity ? feeFor(offer.venue, satisfaction, effort * form * band * reward * (offer.headliner ? 2 : offer.invited ? 0.6 : 1)) : 0) + (bonus?.money ?? 0);
+  // A festival on (events.ts) brings more of both.
+  const boost = extra.boost ?? { fans: 1, money: 1 };
+  const fans = Math.round((fansFor(offer.audience, satisfaction, outcome, effort * form * band * hypeFans(c.hype) * (offer.invited ? 1.3 : 1) * (charity ? 1.6 : 1)) + (bonus?.fans ?? 0)) * (offer.scout && played ? 2 : 1) * boost.fans);
+  const pay = ((played && !charity ? feeFor(offer.venue, satisfaction, effort * form * band * reward * (offer.headliner ? 2 : offer.invited ? 0.6 : 1)) : 0) + (bonus?.money ?? 0)) * boost.money;
   // Big venues cost: crew, trucks, hotels (halved with the band's own crew); a charity gig its
   // organisation.
   const costs = charity ? charityCost(offer.venue.act) : tourCosts(offer.venue.act, pay, c.gear.includes('equipe'));

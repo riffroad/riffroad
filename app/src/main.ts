@@ -12,6 +12,7 @@ import { cableToTake, HwHud } from './hw-hud';
 import { formatTime, leadIn, phraseIndexAt, startLevelFor, type Chart } from './chart';
 import { coverElement } from './cover';
 import { DemoEngine } from './engine/demo';
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauri, TauriEngine, type AudioStatus } from './engine/tauri';
 import { findSong, type Engine, type SongEntry } from './engine/types';
@@ -88,6 +89,10 @@ import { AccountPanel, askWhichSave, tauriCloud } from './account';
 import { CloudSync, storagePart } from './cloud';
 import { lang, LANGS, localize, setLang, t, tn, type Lang } from './i18n';
 import { Perf, tour } from './perf';
+import { thisWeek, weekOf, WorldScreen, type Card as BandCard, type Challenge as WorldChallenge } from './world';
+import { careerBoost, onAt, words, type LiveEvent } from './events';
+import { ghostAt, GhostHud, Trace, type Ghost } from './ghost';
+import { addPractice, practiceCard, streakLine, streakOf, type PracticeLog } from './practice';
 
 // The page's own text (index.html, written in French) in the interface language, before anything reads it.
 localize();
@@ -198,6 +203,24 @@ const highway = new Highway($('stage'), { invertStrings: settings.invertStrings,
 hardwareControls();
 const hud = new Hud($('hud'));
 const attackHud = new AttackHud($('hud'));
+/** Score Attack: the run's points as it goes, and the run it races (ghost.ts). */
+const ghostHud = new GhostHud($('hud'));
+const trace = new Trace();
+let ghost: Ghost | null = null;
+
+/** The ghost of a Score Attack run of `id`: on the weekly challenge, the run just above the
+ * player's on the board; otherwise their own best at that level. */
+async function pickGhost(id: string, level: string): Promise<void> {
+  ghost = null;
+  ghostHud.show(null);
+  if (worldRun && cloud) {
+    const rival = await invoke<{ name: string; score: number; trace: number[] } | null>('cloud_rival').catch(() => null);
+    if (rival?.trace.length) ghost = { name: rival.name, trace: rival.trace };
+  }
+  const own = progress[id]?.ghosts?.[level];
+  if (!ghost && own?.length) ghost = { name: t('ta meilleure partie'), trace: own };
+  if (currentId === id) ghostHud.show(ghost);
+}
 /** Score Attack: the run being played (fixed level, strikes), and the one asked for next. */
 /** The tuning the guitar is in, as far as the app knows: the last song's or tuner's. */
 let heldTuning: readonly number[] = [40, 45, 50, 55, 59, 64];
@@ -209,6 +232,8 @@ let forcedStep: number | null = null;
 let levelsForced = false;
 /** The weekly challenge being played (a Score Attack of the career). */
 let challengeRun: Challenge | null = null;
+/** A run of the weekly challenge (world.ts), sent to its board at the end. */
+let worldRun: WorldChallenge | null = null;
 /** The song being recorded in the studio (a take for the album). */
 let studioRun: string | null = null;
 /** Playback speed of the song (outside the Loop Trainer): slowed down, a play is practice. */
@@ -233,12 +258,44 @@ const screens = {
   encore: $('encore'),
   trophies: $('trophies'),
   lessons: $('lessons'),
+  world: $('world'),
 };
 let imports: Imports | null = null;
 let audio: AudioStatus | null = null;
 /** Game events that arrived before their song's view existed (while loading). */
 let backlog: GameEvent[] = [];
 const form = $<HTMLFormElement>('settings');
+
+/** The events on or coming (events.ts), from the server; asked again at most every ten minutes. */
+let liveEvents: LiveEvent[] = [];
+let eventsAt = 0;
+async function refreshEvents(): Promise<void> {
+  if (!(engine instanceof TauriEngine) || Date.now() - eventsAt < 10 * 60_000) return;
+  eventsAt = Date.now();
+  try {
+    liveEvents = await invoke<LiveEvent[]>('cloud_events');
+    updateMenu();
+  } catch {
+    // No server (offline, or no project): no event.
+  }
+}
+
+/** The days played (practice.ts): seconds of music per day, with the progress. */
+const PRACTICE = 'opensmith.practice';
+function readPractice(): PracticeLog {
+  try {
+    return (JSON.parse(localStorage.getItem(PRACTICE) ?? '{}') as PracticeLog) ?? {};
+  } catch {
+    return {};
+  }
+}
+/** Seconds played on the real guitar, not yet written down. */
+let practicing = 0;
+function notePractice(): void {
+  if (practicing < 1) return;
+  localStorage.setItem(PRACTICE, JSON.stringify(addPractice(readPractice(), new Date(), Math.round(practicing))));
+  practicing = 0;
+}
 
 // The saves kept online (desktop app, signed in): up when they change, down from the menu.
 const cloud =
@@ -251,6 +308,7 @@ const cloud =
           progress: {
             'opensmith.progress': { read: () => engine.progress.load(), write: (v) => engine.progress.save(v as Progress) },
             'opensmith.lessons': storagePart(localStorage, 'opensmith.lessons'),
+            'opensmith.practice': storagePart(localStorage, PRACTICE),
           },
         },
         askWhichSave,
@@ -260,18 +318,48 @@ let cloudSignedIn = false;
 let cloudPulledAt = 0;
 let cloudBusy: Promise<unknown> = Promise.resolve();
 
+/** Fans at the start of this week, for the battle of the bands: `{week, start}`. */
+const WEEK_FANS = 'opensmith.weekFans';
+let cardSent = '';
+
+/** The career as friends see it (world.ts), sent when it changed. */
+async function publishCard(): Promise<void> {
+  if (!career.band) return;
+  const week = weekOf(Date.now() / 1000);
+  type Mark = { week: number; start: number } | null;
+  let mark: Mark;
+  try {
+    mark = JSON.parse(localStorage.getItem(WEEK_FANS) ?? 'null') as Mark;
+  } catch {
+    mark = null;
+  }
+  if (!mark || mark.week !== week || mark.start > career.fans) {
+    mark = { week, start: career.fans };
+    localStorage.setItem(WEEK_FANS, JSON.stringify(mark));
+  }
+  const card: BandCard = { band: career.band.name, act: career.act, fans: career.fans, week, weekFans: career.fans - mark.start };
+  const text = JSON.stringify(card);
+  if (text === cardSent) return;
+  await invoke('cloud_set_card', { card });
+  cardSent = text;
+}
+
 /** One sync at a time. What comes down (from the menu or the settings only) reloads the page
  * right away, before anything in memory can save over it. */
 function cloudSync(pull: boolean): Promise<string> {
   const run = cloudBusy.then(async () => {
     if (!cloud) return '';
-    const status = await tauriCloud.status();
+    let status = await tauriCloud.status();
     $('accountTab').hidden = !status.available;
     cloudSignedIn = !!status.email;
     if (!status.email) return '';
+    // Saves go up once the e-mail is confirmed; asked again until it is.
+    if (status.verified !== true) status = await tauriCloud.check();
+    if (!status.verified) return t('Confirme ton e-mail (le lien reçu) pour envoyer tes sauvegardes.');
     const down = pull && (mode === 'menu' || mode === 'settings');
     const r = await cloud.sync(down);
     if (down) cloudPulledAt = Date.now();
+    await publishCard();
     if (r.pulled.length) {
       location.reload();
       return t('Sauvegardes récupérées.');
@@ -284,14 +372,28 @@ function cloudSync(pull: boolean): Promise<string> {
 }
 
 const cloudQuietly = (pull: boolean) => void cloudSync(pull).catch((e) => console.warn('compte', e));
-setInterval(() => cloudSignedIn && cloudQuietly(false), 60_000);
-document.addEventListener('visibilitychange', () => document.hidden && cloudSignedIn && cloudQuietly(false));
+setInterval(() => {
+  notePractice();
+  if (cloudSignedIn) cloudQuietly(false);
+}, 60_000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) return;
+  notePractice();
+  if (cloudSignedIn) cloudQuietly(false);
+});
 
 const accountPanel = new AccountPanel($('accountSettings'), {
   sync: () => cloudSync(true),
   signedOut: () => {
     cloud?.forget();
     cloudSignedIn = false;
+  },
+  // Like a save come down: the page reloads before anything in memory saves over it.
+  restore: async (slot, version) => {
+    const run = cloudBusy.then(() => cloud?.restore(slot, version));
+    cloudBusy = run.catch(() => undefined);
+    await run;
+    location.reload();
   },
 });
 (form.elements.namedItem('scenery') as HTMLSelectElement).replaceChildren(...SCENERIES.map((s) => new Option(s.label, s.id)));
@@ -306,7 +408,7 @@ langSelect.replaceChildren(...LANGS.map((l) => new Option(l.label, l.id)));
 langSelect.value = lang();
 langSelect.addEventListener('change', () => setLang(langSelect.value as Lang));
 
-type Mode = 'menu' | 'library' | 'imports' | 'tuner' | 'settings' | 'amp' | 'riff' | 'play' | 'pause' | 'results' | 'career' | 'interlude' | 'encore' | 'trophies' | 'lessons';
+type Mode = 'menu' | 'library' | 'imports' | 'tuner' | 'settings' | 'amp' | 'riff' | 'play' | 'pause' | 'results' | 'career' | 'interlude' | 'encore' | 'trophies' | 'lessons' | 'world';
 let mode: Mode = 'menu';
 let songs: SongEntry[] = [];
 let current: SongEntry | null = null;
@@ -456,7 +558,7 @@ function setMode(next: Mode): void {
   if (mode === 'library' && next !== 'library') engine.preview?.(null, 0);
   mode = next;
   // The hardware strip in the menus; the game's own HUD takes the top during a song.
-  hwHud.show(['menu', 'library', 'imports', 'settings', 'career', 'trophies', 'amp', 'lessons'].includes(next));
+  hwHud.show(['menu', 'library', 'imports', 'settings', 'career', 'trophies', 'amp', 'lessons', 'world'].includes(next));
   for (const [name, el] of Object.entries(screens)) el.hidden = name !== next;
   hud.show(next === 'play' || next === 'pause' || next === 'results');
   if (next === 'results') screens.results.querySelector<HTMLElement>('[data-action="library"]')!.textContent = backLabel();
@@ -1123,6 +1225,10 @@ function lastPlayed(): SongEntry | null {
 }
 
 function updateMenu(): void {
+  notePractice();
+  const streak = streakOf(readPractice(), new Date());
+  $('menuStreak').textContent = streakLine(streak);
+  $('menuStreak').classList.toggle('at-risk', streak.atRisk);
   $('menuCareer').textContent = career.history.length
     ? t('Saison {season} · semaine {week} · {fans} fans', { season: career.season, week: career.week, fans: career.fans.toLocaleString(NUMBERS) })
     : t('Du garage au stade, concert après concert');
@@ -1137,6 +1243,15 @@ function updateMenu(): void {
       ? t('Toutes réussies : place aux morceaux !')
       : t('{done} sur {total} réussies · prochaine : {title}', { done, total: all.length, title: all[nextLesson(all, lessonRecords)].title })
     : t('Pour apprendre à jouer, en partant de zéro');
+  const on = onAt(liveEvents, new Date())[0];
+  $('menuEvent').hidden = !on;
+  if (on) {
+    const w = words(on);
+    $('menuEvent').replaceChildren(Object.assign(document.createElement('b'), { textContent: w.title }), ` · ${w.text}`);
+  }
+  const week = thisWeek(liveEvents);
+  const weekSong = findSong(songs, week.song);
+  $('menuWorld').textContent = weekSong ? t('Cette semaine : {title}', { title: weekSong.title }) : t('Un morceau par semaine, un classement pour tous');
   const n = songs.length;
   $('menuSongs').textContent = n ? tn(n, '{n} morceau dans la bibliothèque', '{n} morceaux dans la bibliothèque') : t('Aucun morceau pour l’instant');
   const last = lastPlayed();
@@ -1160,6 +1275,7 @@ function celebrate(trophies: Trophy[]): void {
 
 /** Back to the main menu, from anywhere outside a song. */
 function showMenu(): void {
+  void refreshEvents();
   if (gig) finishGig('abandoned');
   sfx.room(null);
   if (lessonRun !== null) recordFor(false);
@@ -1208,6 +1324,13 @@ async function start(id: string, riffOpening = false): Promise<void> {
   levelsForced = false;
   // Practising after the run (or anything else) is no longer the challenge.
   if (!attack || challengeRun?.song !== id) challengeRun = null;
+  if (!attack || worldRun?.song !== id || worldRun.level !== attack.level.key) worldRun = null;
+  trace.reset();
+  if (attack) void pickGhost(id, attack.level.key);
+  else {
+    ghost = null;
+    ghostHud.show(null);
+  }
   if (attack || studioRun !== id) studioRun = null;
   attackHud.show(attack);
   applyDemoSettings();
@@ -1547,9 +1670,33 @@ function lessonVerdict(acc: number, judged: boolean, practice: boolean): void {
   screens.results.querySelector<HTMLElement>('[data-action="restart"]')!.classList.toggle('primary', go.hidden);
 }
 
+const world = new WorldScreen(screens.world, {
+  events: () => liveEvents,
+  song: (id) => findSong(songs, id) ?? null,
+  cover: (id) => {
+    const song = findSong(songs, id);
+    return song ? coverElement(song.title, song.artist, engine.coverUrl(song), 'world-cover') : null;
+  },
+  signedIn: async () => cloud !== null && !!(await tauriCloud.status()).email,
+  play: (challenge) => {
+    engine.unlock();
+    attackNext = challenge.level;
+    worldRun = challenge;
+    void start(challenge.song);
+  },
+  account: () => openSettings('account'),
+});
+
+function openWorld(): void {
+  setMode('world');
+  void world.show();
+}
+
 async function openTrophies(): Promise<void> {
   await careerLoaded;
   showTrophies(screens.trophies, career);
+  notePractice();
+  screens.trophies.querySelector('.trophies-panel > .help')?.after(practiceCard(readPractice(), new Date()));
   setMode('trophies');
 }
 
@@ -1725,7 +1872,7 @@ function finishGig(outcome: GigOutcome): void {
   }
   gig = null;
   sfx.room(null);
-  const result = concludeGig(career, run.offer, run.songs, outcome, { encore: run.encoreSong, pauses: run.pauses });
+  const result = concludeGig(career, run.offer, run.songs, outcome, { encore: run.encoreSong, pauses: run.pauses, boost: careerBoost(liveEvents, new Date()) });
   career = result.career;
   storeCareer();
   const feat: GigFeat = { outcome, satisfaction: result.record.satisfaction, encore: !!result.record.encore };
@@ -1765,6 +1912,7 @@ helpSheet.addEventListener('click', (e) => {
 
 function restart(): void {
   if (!chart) return;
+  trace.reset();
   if (riff) {
     // The pass starts over from the loop's start.
     engine.setRiff(riff.loop);
@@ -1860,17 +2008,24 @@ function onAttackPhrase(phrase: PhraseDone): void {
 /** The end of a Score Attack run on the results screen: score with bonus, place, high scores. */
 function showAttackResults(grade: string): void {
   document.querySelector('#results .attack-summary')?.remove();
-  document.querySelector('#results .challenge-result:not(.take)')?.remove();
+  document.querySelectorAll('#results .challenge-result:not(.take)').forEach((e) => e.remove());
   if (!attack || !view || !chart || !currentId) return;
   const s = view.score;
   const total = attack.total(s.points);
   const run = { score: total, accuracy: accuracy(s), grade, streak: s.bestStreak };
-  const out = recordAttack(progress[currentId], chart, attack.level.key, run, view.results, attack.failed);
+  const out = recordAttack(progress[currentId], chart, attack.level.key, run, view.results, attack.failed, new Date(), trace.samples);
   progress[currentId] = out.progress;
   void engine.progress.save(progress);
   if (attack.failed) $('verdict').textContent = t('Échec : trois phrases ratées');
   $('records').before(attackSummary(attack, total, out.rank, out.scores));
   if (challengeRun && challengeRun.level === attack.level.key) settleRun(challengeRun, { failed: attack.failed, accuracy: run.accuracy });
+  if (worldRun && worldRun.song === currentId && worldRun.level === attack.level.key) {
+    const line = document.createElement('p');
+    line.className = 'challenge-result world';
+    line.textContent = t('Défi mondial : envoi…');
+    $('records').before(line);
+    void world.submit(worldRun, total, run.accuracy, attack.failed, trace.samples).then((text) => (line.textContent = text));
+  }
 }
 
 /** A studio take: its accuracy kept for the album if it is the best one, a slot of the week. */
@@ -2162,6 +2317,7 @@ document.addEventListener('click', (e) => {
   } else if (action === 'menu' || action === 'pause-menu') showMenu();
   else if (action === 'open-career') void openCareer();
   else if (action === 'open-trophies') void openTrophies();
+  else if (action === 'open-world') openWorld();
   else if (action === 'open-lessons') openLessons();
   else if (action === 'next-lesson' && lessonRun !== null) void startLesson(lessonRun + 1);
   else if (action === 'encore-song') playEncore((e.target as HTMLElement).closest<HTMLElement>('[data-song]')?.dataset.song ?? '');
@@ -2298,6 +2454,8 @@ function frame(ms: number): void {
   const dt = Math.min(0.1, Math.max(0, (ms - last) / 1000));
   last = ms;
   perf.frame(ms);
+  // Music played on the real guitar counts toward the day (not the demo playing itself).
+  if (mode === 'play' && engine.playing && engine instanceof TauriEngine && !settings.autopilot) practicing += dt;
   const t0 = performance.now();
   const f = engine.frame(ms);
   const t1 = performance.now();
@@ -2337,6 +2495,10 @@ function frame(ms: number): void {
     for (const p of view.drainPasses()) onPass(p);
     for (const p of view.drainPhrases()) onAttackPhrase(p);
     hud.update(view, f.time);
+    if (attack && mode === 'play') {
+      trace.note(f.time, view.score.points);
+      if (ghost) ghostHud.update(view.score.points, ghostAt(ghost.trace, f.time));
+    }
     // On stage, every note warms or cools the crowd; a crowd left cold too long ends the gig.
     let booed = false;
     if (gig && mode === 'play') {
