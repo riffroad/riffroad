@@ -10,10 +10,12 @@ import { partName } from './sections';
 export const partsOf = (song: SongEntry): SongEntry[] => [song, ...(song.others ?? [])];
 
 /** An arrangement's name for the player: the usual ones in their language, the others as written. */
-export function partLabel(part: SongEntry): string {
-  const labels: Record<string, string> = { lead: 'Lead', rhythm: t('Rythmique'), combo: 'Combo', bass: t('Basse') };
-  return labels[part.arrangement.toLowerCase()] ?? part.arrangement;
+export function arrangementLabel(name: string): string {
+  const labels: Record<string, string> = { lead: 'Lead', rhythm: t('Rythmique'), combo: 'Combo', bass: t('Basse'), chords: t('Accords') };
+  return labels[name.toLowerCase()] ?? name;
 }
+
+export const partLabel = (part: SongEntry): string => arrangementLabel(part.arrangement);
 
 /** The arrangement of `song` to show first: the kind the player last chose, if it has one. */
 export function preferredPart(song: SongEntry, kind: string | null): SongEntry {
@@ -114,6 +116,8 @@ export interface LibraryHooks {
   /** Score Attack at a difficulty (the card offers it when given). */
   scoreAttack?(id: string, difficulty: AttackDifficulty): void;
   back(): void;
+  /** The song whose card is open plays in the background (null: none). */
+  preview?(song: SongEntry | null): void;
 }
 
 const ATTACK_CHOICE = 'opensmith.attackLevel';
@@ -148,6 +152,8 @@ export class Library {
   /** The song whose card is open, and the arrangement it shows. */
   private chosenSong: SongEntry | null = null;
   private chosen: SongEntry | null = null;
+  /** The song playing in the background, its card open. */
+  private previewing: string | null = null;
   private attackChoice: AttackDifficulty = savedAttackChoice();
   private partChoice: string | null = saved(PART_CHOICE);
 
@@ -241,6 +247,8 @@ export class Library {
   }
 
   closeCard(): void {
+    if (this.previewing) this.hooks.preview?.(null);
+    this.previewing = null;
     this.chosenSong = null;
     this.chosen = null;
     this.el.card.hidden = true;
@@ -322,7 +330,7 @@ export class Library {
         <div class="mastery-text"></div>
       </div>`;
     const art = tile.querySelector('.tile-art')!;
-    art.prepend(coverElement(song.title, song.artist, this.hooks.coverUrl(song), 'tile-cover'));
+    art.prepend(coverElement(song.title, song.artist, () => this.hooks.coverUrl(song), 'tile-cover'));
     const badge = tile.querySelector<HTMLElement>('.tile-source')!;
     badge.textContent = SOURCES[source].label;
     badge.className = `tile-source source-${source}`;
@@ -369,6 +377,11 @@ export class Library {
   private openCard(main: SongEntry, tile: HTMLElement, part = preferredPart(main, this.partChoice)): void {
     this.chosenSong = main;
     this.chosen = part;
+    // Its arrangements share the recording: the preview goes on from one to another.
+    if (this.previewing !== main.id && main.hasAudio !== false) {
+      this.previewing = main.id;
+      this.hooks.preview?.(main);
+    }
     const song = part;
     this.grid().querySelectorAll('.song-tile.chosen').forEach((t) => t.classList.remove('chosen'));
     tile.classList.add('chosen');

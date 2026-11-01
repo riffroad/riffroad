@@ -3219,6 +3219,11 @@ body:not(.live) .live-only {
   font-size: 15px;
 }
 
+.lesson-pace {
+  max-width: 320px;
+  margin: 0 0 6px;
+}
+
 .lesson-tempo {
   margin: 0 0 10px;
   color: var(--muted);

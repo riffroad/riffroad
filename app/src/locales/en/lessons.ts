@@ -2,6 +2,11 @@
 export const LESSONS: Record<string, string> = {
   // Menu and screen
   'Leçons': 'Lessons',
+  'Lent': 'Slow',
+  'Attente': 'Wait',
+  'Le jeu s’arrête sur chaque note ou accord et attend que tu le joues.': 'The game stops on each note or chord and waits for you to play it.',
+  'Le jeu t’attend': 'The game is waiting',
+  'Place tes doigts, puis joue : ça repart. Espace pour passer une note.': 'Place your fingers, then play: it goes on. Space to skip a note.',
   'Pour apprendre à jouer, en partant de zéro': 'Learn to play, starting from scratch',
   '{done} sur {total} réussies · prochaine : {title}': '{done} of {total} passed · next: {title}',
   'Toutes réussies : place aux morceaux !': 'All passed: on to real songs!',
@@ -127,7 +132,7 @@ export const LESSONS: Record<string, string> = {
   'Ta guitare, note par note': 'Your guitar, note by note',
   'Chaque corde à vide, puis case après case jusqu’à la 12 : le jeu apprend comment sonne ta guitare.':
     'Each open string, then fret after fret up to the 12th: the game learns how your guitar sounds.',
-  'Une note toutes les deux secondes, sur le clic : laisse-la sonner jusqu’à la suivante.': 'One note every two seconds, on the click: let it ring until the next one.',
+  'Une note tous les deux clics : laisse-la sonner jusqu’à la suivante. Trop rapide ? Choisis « Lent ».': 'One note every two clicks: let it ring until the next one. Too fast? Choose “Slow”.',
   'Une corde après l’autre, de la rouge à la violette. Un seul doigt suffit : suis la lumière sur le manche.':
     'One string after the other, from red to purple. One finger is enough: follow the light on the neck.',
   'Une note ratée n’est pas grave : elle est simplement laissée de côté.': 'A missed note does not matter: it is simply left out.',

@@ -60,6 +60,8 @@ export type GameEvent =
   /** Out of a song (menus, free play): a note the guitar played, an attack without one pitch. */
   | { type: 'played'; midi: number; cents: number }
   | { type: 'strum' }
+  /** Wait mode: the song stopped on expected note `index` until the guitar plays it. */
+  | { type: 'waiting'; index: number }
   /** Latency calibration: clicks at first + k * period, the first countIn announce the beat. */
   | { type: 'calibrationStart'; first: number; period: number; countIn: number; clicks: number }
   | { type: 'calibrationHit'; index: number; error: number }

@@ -93,7 +93,7 @@ function recordings(): Lesson[] {
       title: t('Ta guitare, note par note'),
       learn: t('Chaque corde à vide, puis case après case jusqu’à la 12 : le jeu apprend comment sonne ta guitare.'),
       how: [
-        t('Une note toutes les deux secondes, sur le clic : laisse-la sonner jusqu’à la suivante.'),
+        t('Une note tous les deux clics : laisse-la sonner jusqu’à la suivante. Trop rapide ? Choisis « Lent ».'),
         t('Une corde après l’autre, de la rouge à la violette. Un seul doigt suffit : suis la lumière sur le manche.'),
         t('Une note ratée n’est pas grave : elle est simplement laissée de côté.'),
       ],
@@ -281,8 +281,20 @@ function indexFret(step: Step, hand: number): number {
 }
 
 /** The lesson as a chart the engine plays: a bar of metronome, then the steps, standard tuning. */
-export function lessonChart(lesson: Lesson, index: number): Chart {
-  const spb = 60 / lesson.bpm;
+/** How fast a lesson goes, against its own tempo: slower while the fingers look for the frets. */
+export const LESSON_PACES = [
+  // The song stops on each note or chord and goes on once it is played: time to place the fingers.
+  { id: 'wait', label: t('Attente'), factor: 1 },
+  { id: 'slow', label: t('Lent'), factor: 0.5 },
+  { id: 'normal', label: t('Normal'), factor: 1 },
+  { id: 'fast', label: t('Rapide'), factor: 1.25 },
+] as const;
+export type LessonPace = (typeof LESSON_PACES)[number]['id'];
+export const paceFactor = (pace: LessonPace): number => LESSON_PACES.find((p) => p.id === pace)?.factor ?? 1;
+
+/** Lesson `index` as a chart, at `pace` times its tempo. */
+export function lessonChart(lesson: Lesson, index: number, pace = 1): Chart {
+  const spb = 60 / (lesson.bpm * pace);
   const at = (beat: number) => (LEAD + beat) * spb;
   const steps = [...lesson.steps].sort((a, b) => a.beat - b.beat);
   const names = [...new Set(steps.filter(isChord).map((s) => s.chord))];
@@ -324,7 +336,7 @@ export function lessonChart(lesson: Lesson, index: number): Chart {
     meta: { title, artist: t('Leçons OpenSmith'), album: null, year: null, duration, source: { kind: 'lesson', file: lesson.id }, generator: 'opensmith-lessons' },
     audio: { backing: null, guitar: null, mix: null, offset: 0 },
     arrangement: { name: 'Lead', type: 'lead', tuning: { name: 'E Standard', strings: [...STANDARD] }, capo: 0, maxDifficulty: 0 },
-    tempo: { bpm: lesson.bpm, timeSignature: [4, 4] },
+    tempo: { bpm: lesson.bpm * pace, timeSignature: [4, 4] },
     beats: Array.from({ length: beats + 1 }, (_, k) => (k % 4 === 0 ? { time: k * spb, bar: k / 4 + 1 } : { time: k * spb })),
     sections: [{ name: lesson.title, start: 0, end: duration }],
     phrases: [{ name: lesson.title, start: 0, end: duration, maxDifficulty: 0 }],

@@ -3,7 +3,8 @@
 Outputs in `out_dir` (all at the engine's 48 kHz):
 * `backing_track_no_guitar.wav` — what plays while you play (mix minus the guitar stem);
 * `isolated_guitar.wav` — the original guitar, for a "guide" mix or listening back;
-* `song_chart.json` — the chart (schema/chart.schema.json).
+* `song_chart.json` — the chart (schema/chart.schema.json);
+* `song_chart.chords.json` — the "Chords" arrangement: the chords on the beats (`chord_chart`).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import align, audio_io, beats, builder, separation, transcription, tunings
+from . import align, audio_io, beats, builder, chord_chart, separation, transcription, tunings
 from .chart import Chart
 from .fingering import Tuning
 from .importers.guitarpro import TabPart, named_sections, parse_guitarpro
@@ -37,6 +38,8 @@ COVER = "cover.jpg"
 PREVIOUS_CHART = "song_chart.previous.json"
 # Which tab the chart was made from, when it was.
 TAB_RECORD = "tab.json"
+# The chords of a transcribed song, beside its chart.
+CHORD_CHART = "song_chart.chords.json"
 
 
 @dataclass
@@ -171,6 +174,7 @@ def ingest_audio(
     if placement is not None and part is not None and tab is not None:
         chart = _tab_chart(part, placement, tab, title or path.stem, artist, duration)
     else:
+        features = guitar_phrase_features(audio_io.resample(stems.guitar.mean(0, keepdims=True), DEMUCS_RATE, ANALYSIS_RATE)[0], ANALYSIS_RATE)
         chart = builder.build_chart(
             notes,
             grid,
@@ -180,15 +184,15 @@ def ingest_audio(
             tuning=tuning,
             source_kind="audio",
             source_file=path.name,
-            phrase_features=guitar_phrase_features(
-                audio_io.resample(stems.guitar.mean(0, keepdims=True), DEMUCS_RATE, ANALYSIS_RATE)[0], ANALYSIS_RATE
-            ),
+            phrase_features=features,
             check=lambda voted: transcription.recheck(voted, stem_audio, tuning),
         )
     chart.audio_backing = backing_path.name
     chart.audio_guitar = guitar_path.name
     chart_path = out_dir / "song_chart.json"
     chart.save(chart_path)
+    if placement is None:
+        _save_chords(out_dir, chart, raw, grid, features)
     if placement is not None and tab is not None:
         _note_tab(out_dir, tab, track, placement.confirmed)
     steps.done()
@@ -209,6 +213,29 @@ def ingest_audio(
         tab,
         placement.confirmed if placement is not None else None,
     )
+
+
+def _save_chords(out_dir: Path, chart: Chart, raw: list[transcription.RawNote], grid: builder.BeatGrid, features: Callable[[float, float], np.ndarray]) -> None:
+    """The song's "Chords" arrangement beside its `chart`, on the same audio."""
+    chords = chord_chart.build_chord_chart(
+        raw,
+        grid,
+        title=chart.title,
+        artist=chart.artist,
+        duration=chart.duration,
+        tuning=chart.tuning,
+        source_kind=chart.source_kind,
+        source_file=chart.source_file,
+        phrase_features=features,
+    )
+    chords.album, chords.year = chart.album, chart.year
+    chords.audio_backing, chords.audio_guitar, chords.audio_mix, chords.audio_offset = (
+        chart.audio_backing,
+        chart.audio_guitar,
+        chart.audio_mix,
+        chart.audio_offset,
+    )
+    chords.save(out_dir / CHORD_CHART)
 
 
 def _tab_chart(part: TabPart, placement: align.Placement, tab: Path, title: str, artist: str, duration: float) -> Chart:
@@ -332,6 +359,7 @@ def rechart(out_dir: Path, *, consensus: bool = True, report: dict | None = None
     title, by = guess_title_artist(old.title, known)
     artist = by or old.artist
     guitar = audio_io.decode(guitar_path, ANALYSIS_RATE, 1)[0]
+    features = guitar_phrase_features(guitar, ANALYSIS_RATE)
     chart = builder.build_chart(
         notes,
         grid,
@@ -341,7 +369,7 @@ def rechart(out_dir: Path, *, consensus: bool = True, report: dict | None = None
         tuning=tuning,
         source_kind=old.source_kind,
         source_file=old.source_file,
-        phrase_features=guitar_phrase_features(guitar, ANALYSIS_RATE),
+        phrase_features=features,
         consensus=consensus,
         report=report,
         check=lambda voted: transcription.recheck(voted, stem_audio, tuning),
@@ -354,4 +382,5 @@ def rechart(out_dir: Path, *, consensus: bool = True, report: dict | None = None
     )
     chart.album, chart.year = old.album, old.year
     chart.save(out_dir / "song_chart.json")
+    _save_chords(out_dir, chart, raw, grid, features)
     return chart

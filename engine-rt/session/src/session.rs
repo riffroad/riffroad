@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -8,7 +8,7 @@ use opensmith_dsp::fx::resample::resample_fast;
 use opensmith_dsp::notefeat::{NoteFeatures, BINS, HOP, PER_SEMITONE, WINDOW};
 use opensmith_dsp::notenet::NoteNet;
 use opensmith_dsp::{ChainParams, ChordConfig, ChordVerifier, TrackerEvent, TunerAnalyzer, TunerConfig};
-use opensmith_game::{Chart, Game, GameConfig, Score, Target};
+use opensmith_game::{Chart, Game, GameConfig, Score, Status, Target};
 
 use crate::calibration::{Calibration, CalibrationPlan};
 use crate::events::{UiEvent, UiExpected};
@@ -27,6 +27,9 @@ const PITCH_EVERY: f64 = 0.02;
 /// How long a strum takes across the strings (s): a chord is checked up to this long after its
 /// attack.
 const STRUM: f64 = 0.05;
+/// Wait mode: a note or chord is waited on when the song reaches it, if it reached it no more
+/// than this long ago (s).
+const WAIT_CATCH: f64 = 0.25;
 /// A strum the tracker did not notice still makes the guitar this much louder (dB): over the
 /// 40 ms from it against the 45 ms before.
 const STRUM_RISE_DB: f32 = 2.0;
@@ -153,6 +156,21 @@ pub struct Session<B: AudioBackend> {
     /// Chords already checked at their attack (by index): not checked again until the end of
     /// their window.
     tried: std::collections::HashSet<usize>,
+    /// Wait mode (lessons): the song stands still on each note or chord until the guitar plays it.
+    wait: bool,
+    waiting: Option<Waiting>,
+    /// Notes and chords let go by hand (the song resumed from the pause menu): not waited on again.
+    waived: HashSet<usize>,
+}
+
+/// The note or chord the song stopped on, in wait mode.
+struct Waiting {
+    /// Its index in the game's expected list.
+    index: usize,
+    /// Input sample from which the guitar is listened to.
+    from: u64,
+    /// Attacks heard since (input samples), not checked yet.
+    attacks: Vec<u64>,
 }
 
 /// The learned note detector (`opensmith_dsp::notenet`) and its working buffers.
@@ -185,6 +203,22 @@ impl Listener {
         let span = 2 * half + (self.net.frames() - 1) * HOP;
         let from = t - rate * (self.net.before * HOP + half) as f64 / sr;
         strum_audio(monitor, clock, history, &mut self.audio, from, span as f64 / sr, sr)?;
+        Some(self.probabilities(cents))
+    }
+
+    /// `attacked` at input sample `attack` (a song waiting on the player stands still: its time
+    /// no longer tells where the guitar's audio is).
+    fn attacked_at(&mut self, history: &TapHistory, attack: u64, cents: f64) -> Option<(i32, Vec<f32>)> {
+        let half = WINDOW / 2;
+        let span = 2 * half + (self.net.frames() - 1) * HOP;
+        let from = attack.checked_sub((self.net.before * HOP + half) as u64)?;
+        self.audio.resize(span, 0.0);
+        history.read(from, &mut self.audio).then(|| self.probabilities(cents))
+    }
+
+    /// The detector on the audio read last (`audio`).
+    fn probabilities(&mut self, cents: f64) -> (i32, Vec<f32>) {
+        let half = WINDOW / 2;
         // Bins the guitar's pitches sit above A440's (fractional), read back onto A440's.
         let shift = (cents * PER_SEMITONE as f64 / 100.0) as f32;
         let mut tuned = [0.0f32; BINS];
@@ -200,7 +234,7 @@ impl Listener {
                 row.copy_from_slice(&tuned);
             }
         }
-        Some((self.net.first, self.net.attacked(&self.window)))
+        (self.net.first, self.net.attacked(&self.window))
     }
 }
 
@@ -281,6 +315,9 @@ impl<B: AudioBackend> Session<B> {
             saving: Vec::new(),
             listener: Listener::builtin(),
             tried: std::collections::HashSet::new(),
+            wait: false,
+            waiting: None,
+            waived: HashSet::new(),
         }
     }
 
@@ -567,6 +604,16 @@ impl<B: AudioBackend> Session<B> {
         self.backend.monitor().send(PlayerCommand::Play);
     }
 
+    /// Wait mode: the song stops on each note or chord when it is due, and goes on once the
+    /// guitar played it (in time, then: a lesson's notes, however long the fingers take). Off,
+    /// a song waiting goes on.
+    pub fn set_wait(&mut self, on: bool) {
+        self.wait = on;
+        if !on && self.waiting.take().is_some() {
+            self.play();
+        }
+    }
+
     pub fn pause(&mut self) {
         self.backend.monitor().send(PlayerCommand::Pause);
     }
@@ -713,12 +760,14 @@ impl<B: AudioBackend> Session<B> {
             self.loops_seen = clock.loops;
             self.next_pass();
         }
-        let now = clock.time_at(self.backend.now_ns() as f64, sr) - offset;
+        let host_now = self.backend.now_ns() as f64;
+        let now = clock.time_at(host_now, sr) - offset;
         let monitor = self.backend.monitor();
         let song = |m: &Monitor, sample: u64| m.input_time_ns(sample as f64).map(|h| clock.time_at(h, sr) - offset);
         if let Some(r) = &mut self.recording {
-            // Only the song played as recorded: not paused, not slowed down.
-            let live = clock.playing && self.rate == 1.0;
+            // Only the song played as recorded: not paused (but waiting on the player, a lesson's
+            // note being played), not slowed down.
+            let live = (clock.playing || self.waiting.is_some()) && self.rate == 1.0;
             for (first, samples) in std::mem::take(&mut r.pending) {
                 if let Some(t) = song(monitor, first).filter(|_| live) {
                     r.add(t, &samples, sr);
@@ -755,6 +804,88 @@ impl<B: AudioBackend> Session<B> {
         };
         game.activate_until(now);
         flush_expected(game, &mut self.sent, &mut self.events);
+        if self.wait {
+            let input_now = monitor.input_index_at(host_now).map_or(0, |i| i.max(0.0) as u64);
+            match self.waiting.take() {
+                // Resumed by hand (the pause menu): that one is let go.
+                Some(w) if clock.playing => {
+                    self.waived.insert(w.index);
+                }
+                Some(mut w) => {
+                    w.attacks.extend(onsets.iter().chain(notes.iter().map(|n| &n.0)).copied().filter(|&s| s >= w.from));
+                    let listen = self.listener.as_ref().map_or(self.cfg.chord_window, Listener::after);
+                    let ready = input_now.saturating_sub(((STRUM + listen + TAP_DELAY) * sr) as u64);
+                    let e = &game.expected()[w.index];
+                    let (index, time) = (w.index, e.time);
+                    let judging = self.cfg.judging;
+                    let (listener, history, cents) = (&mut self.listener, &self.history, self.cents);
+                    let played = match &e.target {
+                        Target::Note { midi, .. } => {
+                            let midi = *midi;
+                            // The tracker's pitch, else the detector at an attack.
+                            notes.iter().any(|&(s, m, c)| s >= w.from && (heard_pitch(m, c, cents) - midi as f64).abs() < 0.5)
+                                || w.attacks.iter().filter(|&&a| a <= ready).any(|&a| {
+                                    listener
+                                        .as_mut()
+                                        .and_then(|l| l.attacked_at(history, a, cents))
+                                        .is_some_and(|(first, probs)| probs.get((midi - first) as usize).is_some_and(|&p| p >= judging.heard))
+                                })
+                        }
+                        Target::Chord { template, midis } => {
+                            let brushable = game.chart().brushable(*template);
+                            w.attacks.iter().filter(|&&a| a <= ready).any(|&a| match listener.as_mut() {
+                                Some(l) => {
+                                    let mut best: Option<(i32, Vec<f32>)> = None;
+                                    for d in STRUM_LOOKS {
+                                        let at = (a as f64 + (d - STRUM / 2.0) * sr).max(0.0) as u64;
+                                        let Some((first, probs)) = l.attacked_at(history, at, cents) else { return false };
+                                        match best.as_mut() {
+                                            Some((_, b)) => b.iter_mut().zip(&probs).for_each(|(b, p)| *b = b.max(*p)),
+                                            None => best = Some((first, probs)),
+                                        }
+                                    }
+                                    best.is_some_and(|(first, probs)| strummed(first, &probs, midis, &brushable, &judging))
+                                }
+                                None => {
+                                    self.scratch.resize((self.cfg.chord_window * sr) as usize, 0.0);
+                                    let a4 = self.cfg.a4 * 2f32.powf(cents as f32 / 1200.0);
+                                    history.read(a, &mut self.scratch) && self.verifier.verify(&self.scratch, midis, a4).accepted
+                                }
+                            })
+                        }
+                    };
+                    if played {
+                        // On the beat: the song waited for it.
+                        let at = Some(time + self.cfg.game.input_offset);
+                        let judged = match game.expected()[index].target {
+                            Target::Note { .. } => game.on_note_heard(index, true, at),
+                            Target::Chord { .. } => game.on_chord(index, true, at),
+                        };
+                        self.events.extend(judged.map(UiEvent::from));
+                        monitor.send(PlayerCommand::Play);
+                    } else {
+                        w.attacks.retain(|&a| a > ready);
+                        self.waiting = Some(w);
+                    }
+                }
+                None if clock.playing => {
+                    // The next note or chord due, just now (not one long gone).
+                    let due = game
+                        .expected()
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, e)| e.status == Status::Pending && !self.waived.contains(i) && e.time <= now && e.time > now - WAIT_CATCH)
+                        .min_by(|a, b| a.1.time.total_cmp(&b.1.time))
+                        .map(|(i, _)| i);
+                    if let Some(index) = due {
+                        monitor.send(PlayerCommand::Pause);
+                        self.waiting = Some(Waiting { index, from: input_now, attacks: Vec::new() });
+                        self.events.push(UiEvent::Waiting { index });
+                    }
+                }
+                None => {}
+            }
+        }
         if self.autopilot && clock.playing {
             self.events.extend(game.autoplay(now).into_iter().map(UiEvent::from));
         }
@@ -901,6 +1032,8 @@ impl<B: AudioBackend> Session<B> {
 
     fn restart_view(&mut self, t: f64) {
         self.tried.clear();
+        self.waiting = None;
+        self.waived.clear();
         self.target = t;
         self.sent = 0;
         self.attacks.clear();

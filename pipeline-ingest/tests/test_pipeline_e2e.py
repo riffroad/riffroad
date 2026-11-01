@@ -51,6 +51,24 @@ def test_outputs_are_written_and_valid(run):
     assert chart.notes or chart.chords
 
 
+
+def test_the_chords_arrangement_follows_the_riffs(run):
+    _, report = run
+    chords = Chart.load(report.chart_path.with_name("song_chart.chords.json"))
+    assert (chords.arrangement_name, chords.audio_backing) == ("Chords", "backing_track_no_guitar.wav")
+    _, strums = chords.events_at(chords.max_difficulty)
+
+    def bass_at(t: float) -> int | None:
+        c = min(strums, key=lambda c: abs(c.time - t))
+        frets = chords.templates[c.template].frets
+        return min(chords.tuning.pitch(s, f) for s, f in enumerate(frets) if f >= 0) % 12 if abs(c.time - t) < 0.1 else None
+
+    # Riff A: E5 on the bar, A5 on its third beat (see `rock_song`).
+    beat = 60.0 / 110.0
+    riffs = [1.0 + bar * 4 * beat for bar in range(0, 16, 2) if (bar // 2) % 4 != 3]
+    right = sum(bass_at(t) == 4 for t in riffs) + sum(bass_at(t + 2 * beat) == 9 for t in riffs)
+    assert right >= 0.8 * 2 * len(riffs)
+
 def test_beat_grid_matches_the_drummer(run):
     song, report = run
     chart = Chart.load(report.chart_path)

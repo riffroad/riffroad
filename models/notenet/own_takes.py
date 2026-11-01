@@ -23,10 +23,16 @@ PITCH_TOLERANCE = 0.7  # semitones, the octave aside (the low strings fool pitch
 CHORD_SHARE = 0.5  # of the chroma energy in the chord's own pitch classes
 
 
-def song_to_sample(anchors: list, sr: int):
-    """Song time → sample of the take, from its (sample, song time) anchors."""
-    samples = np.array([a[0] for a in anchors], dtype=float)
-    times = np.array([a[1] for a in anchors], dtype=float)
+def song_to_sample(anchors: list, sr: int, last: bool = False):
+    """Song time → sample of the take, from its (sample, song time) anchors. A lesson in wait
+    mode stood still on each note until it was played: its anchors repeat a song time, and `last`
+    takes the end of such a stop rather than its start."""
+    pairs: dict[float, int] = {}
+    for sample, time in anchors:
+        if last or time not in pairs:
+            pairs[time] = sample
+    times = np.array(sorted(pairs), dtype=float)
+    samples = np.array([pairs[t] for t in sorted(pairs)], dtype=float)
 
     def at(t: float) -> float:
         if len(times) == 1 or t <= times[0]:
@@ -38,9 +44,9 @@ def song_to_sample(anchors: list, sr: int):
     return at
 
 
-def attack(env: np.ndarray, centre_ms: int) -> int | None:
-    """The attack (ms) nearest the strongest rise of `env` (1 ms frames) around `centre_ms`."""
-    lo, hi = max(centre_ms - int(EARLY * 1000), 40), min(centre_ms + int(LATE * 1000), len(env) - 12)
+def attack(env: np.ndarray, span: tuple[int, int]) -> int | None:
+    """The attack (ms) nearest the strongest rise of `env` (1 ms frames) within `span` (ms)."""
+    lo, hi = max(span[0], 40), min(span[1], len(env) - 12)
     if hi <= lo:
         return None
     log = np.log(env + 1e-7)
@@ -84,14 +90,15 @@ def convert(folder: Path, out_base: Path) -> str | None:
         return None
     meta = json.loads((folder / "take.json").read_text())
     x, sr = sf.read(folder / "guitar.wav", dtype="float32")
-    to_sample = song_to_sample(meta["anchors"], sr)
+    first, last = song_to_sample(meta["anchors"], sr), song_to_sample(meta["anchors"], sr, last=True)
     env = np.abs(x[: len(x) // (sr // 1000) * (sr // 1000)]).reshape(-1, sr // 1000).mean(axis=1)
     tuning = chart["arrangement"]["tuning"]["strings"]
 
-    def expected(t: float) -> int:
-        """Where an attack at song time `t` shows in the recording (ms): the live game took the
-        latency off."""
-        return int(to_sample(t + meta.get("inputOffset", 0.0)) / sr * 1000)
+    def expected(t: float) -> tuple[int, int]:
+        """Where an attack at song time `t` may show in the recording (ms): from a little early
+        to a little late (the live game took the latency off), the whole stop in wait mode."""
+        t += meta.get("inputOffset", 0.0)
+        return int(first(t - EARLY) / sr * 1000), int(last(t + LATE) / sr * 1000)
 
     notes, chords, dropped = [], [], 0
     for n in chart["notes"]:

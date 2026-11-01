@@ -1,8 +1,10 @@
 /**
- * The game's sounds, made here rather than recorded: the interface's clicks, the cues in play
- * (count-in, streaks, the grade, a fanfare) and a crowd (its murmur, cheers, applause,
- * clapping in time). Each is mono samples at its own rate, the same on every run (seeded
- * noise), so they can be checked by tests and need no file nor licence.
+ * The game's sounds, made here rather than recorded, in a garage band's colours: the interface
+ * as a guitar through a cranked amp (pick scratches, palm-muted chugs, a footswitch), the cues
+ * in play (the drummer's sticks counting in, pick slides, power chords, feedback) and the crowd
+ * of a small club (its murmur, cheers, whistles, applause, clapping in time), with the room
+ * around them. Each is mono samples at its own rate, the same on every run (seeded noise), so
+ * they can be checked by tests and need no file nor licence.
  */
 
 export const SOUND_NAMES = [
@@ -90,19 +92,6 @@ function normalize(x: Float32Array, peak: number): Float32Array {
   for (const v of x) max = Math.max(max, Math.abs(v));
   if (max > 0) for (let i = 0; i < x.length; i++) x[i] *= peak / max;
   return x;
-}
-
-/** A tone gliding from `from` to `to` Hz over `glide` s, with an envelope. */
-function blip(rate: number, seconds: number, from: number, to: number, glide: number, attack: number, tau: number, peak: number): Float32Array {
-  const x = buffer(rate, seconds);
-  let ph = 0;
-  for (let i = 0; i < x.length; i++) {
-    const t = i / rate;
-    const f = t < glide ? from + ((to - from) * t) / glide : to;
-    ph += f / rate;
-    x[i] = Math.sin(TAU * ph) * env(t, attack, tau);
-  }
-  return normalize(x, peak);
 }
 
 /** A struck bell at `freq`: its partials (1, 2.76, 5.4) dying away at their own pace. */
@@ -217,109 +206,216 @@ function applause(rate: number, seconds: number, people: number, seed: number): 
   return x;
 }
 
+/** A plucked string (Karplus-Strong) at `freq`, from `at` s, ringing `ring` s to -60 dB; a palm
+ * on the strings (`ring` under a quarter second) also dulls it. */
+function pluck(x: Float32Array, rate: number, at: number, freq: number, ring: number, gain: number, rand: () => number): void {
+  const n = Math.max(2, Math.round(rate / freq));
+  const line = new Float32Array(n);
+  const pick = lowpass(rate, 5000);
+  for (let i = 0; i < n; i++) line[i] = pick(rand());
+  const loss = Math.pow(10, -3 / (ring * freq));
+  const palm = ring < 0.25 ? lowpass(rate, 700) : (v: number) => v;
+  let prev = 0;
+  for (let i = Math.round(at * rate), k = 0; i < x.length; i++, k = (k + 1) % n) {
+    const out = line[k];
+    line[k] = loss * palm(0.5 * (out + prev));
+    prev = out;
+    x[i] += gain * out;
+  }
+}
+
+/** A power chord (root, fifth, octave) strummed down from `at`. */
+function powerChord(x: Float32Array, rate: number, at: number, root: number, ring: number, gain: number, rand: () => number): void {
+  [1, 1.4983, 2].forEach((m, k) => pluck(x, rate, at + 0.007 * k, root * m, ring, gain, rand));
+}
+
+/** Through a cranked amp: the muddy lows cut, driven into a soft clipper, then a speaker
+ * cabinet's top end rolled off past `tone` Hz. */
+function amp(x: Float32Array, rate: number, drive: number, tone = 3500): Float32Array {
+  const low = lowpass(rate, 100);
+  const cab = lowpass(rate, tone);
+  const cab2 = lowpass(rate, tone * 1.4);
+  const presence = bandpass(rate, 1800, 0.9);
+  for (let i = 0; i < x.length; i++) {
+    const d = Math.tanh(drive * (x[i] - low(x[i])));
+    x[i] = cab2(cab(d)) + 0.25 * presence(d);
+  }
+  return x;
+}
+
+/** A pick slid along the wound strings for `seconds`: their windings rasp at `from` Hz, then
+ * `to` as the pick speeds up or slows down. */
+function scrape(x: Float32Array, rate: number, at: number, seconds: number, from: number, to: number, gain: number, rand: () => number): void {
+  const s0 = Math.round(at * rate);
+  const n = Math.round(seconds * rate);
+  const body = bandpass(rate, 2300, 1.1);
+  let ph = 0;
+  for (let i = 0; i < n && s0 + i < x.length; i++) {
+    const k = i / n;
+    ph += (from * Math.pow(to / from, k)) / rate;
+    const ridge = 0.35 + 0.65 * Math.max(0, Math.sin(TAU * ph));
+    const e = Math.min(1, i / (0.015 * rate)) * (k > 0.6 ? (1 - k) / 0.4 : 1);
+    x[s0 + i] += gain * e * body(rand() * ridge);
+  }
+}
+
+/** The drummer's sticks knocked together: a woody click and their short ring at `pitch` Hz. */
+function sticks(x: Float32Array, rate: number, pitch: number, gain: number, rand: () => number): void {
+  const wood = bandpass(rate, pitch, 4);
+  for (let i = 0; i < x.length; i++) {
+    const t = i / rate;
+    x[i] += gain * (1.5 * wood(rand()) * env(t, 0.0003, 0.003) + 0.5 * Math.sin(TAU * pitch * t) * env(t, 0.0005, 0.012) + 0.25 * Math.sin(TAU * 2.3 * pitch * t) * env(t, 0.0005, 0.006));
+  }
+}
+
+/** Feedback: the amp starts to howl at `freq` from `at` s, swelling with a slow wobble. */
+function feedback(x: Float32Array, rate: number, at: number, freq: number, gain: number): void {
+  let ph = 0;
+  for (let i = Math.round(at * rate); i < x.length; i++) {
+    const t = i / rate - at;
+    ph += (freq * (1 + 0.004 * Math.sin(TAU * 5 * t))) / rate;
+    x[i] += gain * Math.min(1, t / 0.5) * (Math.sin(TAU * ph) + 0.3 * Math.sin(TAU * 2 * ph));
+  }
+}
+
+/** Someone whistling with two fingers: up to the note, held, a little drop at the end. */
+function whistle(x: Float32Array, rate: number, at: number, length: number, freq: number, gain: number, rand: () => number): void {
+  const breath = bandpass(rate, freq, 3);
+  let ph = 0;
+  const s0 = Math.round(at * rate);
+  for (let i = s0; i < Math.min(x.length, s0 + Math.round(length * rate)); i++) {
+    const t = (i - s0) / rate;
+    const f = freq * (0.8 + 0.2 * Math.min(1, t / 0.08)) * (t > length - 0.12 ? 1 - 0.12 * ((t - length + 0.12) / 0.12) : 1);
+    ph += f / rate;
+    const e = Math.min(1, t / 0.03) * Math.min(1, (length - t) / 0.05);
+    x[i] += gain * e * (Math.sin(TAU * ph) + 0.15 * breath(rand()));
+  }
+}
+
+/** A small club around the sound: its walls' echoes dying in about `tail` s (four combs, then
+ * two all-passes, Schroeder's), `wet` of them added. */
+function room(x: Float32Array, rate: number, wet: number, tail = 0.6): Float32Array {
+  const combs = [0.0297, 0.0371, 0.0411, 0.0437].map((d) => ({ line: new Float32Array(Math.round(d * rate)), k: 0, g: Math.pow(10, (-3 * d) / tail), dull: lowpass(rate, 3000) }));
+  const passes = [0.005, 0.0017].map((d) => ({ line: new Float32Array(Math.round(d * rate)), k: 0 }));
+  const out = new Float32Array(x.length);
+  for (let i = 0; i < x.length; i++) {
+    let s = 0;
+    for (const c of combs) {
+      const y = c.line[c.k];
+      c.line[c.k] = x[i] + c.g * c.dull(y);
+      c.k = (c.k + 1) % c.line.length;
+      s += y;
+    }
+    s *= 0.25;
+    for (const a of passes) {
+      const b = a.line[a.k];
+      const o = b - 0.7 * s;
+      a.line[a.k] = s + 0.7 * o;
+      a.k = (a.k + 1) % a.line.length;
+      s = o;
+    }
+    out[i] = x[i] + wet * s;
+  }
+  return out;
+}
+
 /** The sound `name`, mono at `rate` Hz. */
 export function synthesize(name: SoundName, rate: number): Float32Array {
   switch (name) {
-    case 'hover':
-      return blip(rate, 0.03, 2600, 2600, 0, 0.001, 0.005, 0.12);
-    case 'click': {
-      const x = blip(rate, 0.09, 900, 1350, 0.03, 0.002, 0.022, 0.4);
-      const rand = noise(7);
-      const hp = lowpass(rate, 3000);
-      for (let i = 0; i < 0.004 * rate; i++) {
-        const n = rand();
-        x[i] += 0.15 * (n - hp(n)) * (1 - i / (0.004 * rate));
-      }
-      return x;
+    case 'hover': {
+      // The pick brushing the muted strings.
+      const x = buffer(rate, 0.035);
+      const rand = noise(3);
+      const bp = bandpass(rate, 3000, 1.5);
+      for (let i = 0; i < x.length; i++) x[i] = bp(rand()) * env(i / rate, 0.0005, 0.006);
+      return normalize(amp(x, rate, 3, 5000), 0.1);
     }
-    case 'back':
-      return blip(rate, 0.1, 1250, 760, 0.04, 0.002, 0.025, 0.35);
+    case 'click': {
+      // A palm-muted chug on the low E.
+      const x = buffer(rate, 0.12);
+      pluck(x, rate, 0, 82.41, 0.07, 1, noise(7));
+      return normalize(amp(x, rate, 6), 0.38);
+    }
+    case 'back': {
+      // The same, a tone lower and darker.
+      const x = buffer(rate, 0.13);
+      pluck(x, rate, 0, 73.42, 0.06, 1, noise(9));
+      return normalize(amp(x, rate, 5, 2400), 0.32);
+    }
     case 'tick': {
+      // A stompbox's footswitch.
       const x = buffer(rate, 0.03);
       const rand = noise(11);
-      const bp = bandpass(rate, 3200, 3);
+      const snap = bandpass(rate, 2400, 3);
+      const body = bandpass(rate, 900, 2);
       for (let i = 0; i < x.length; i++) {
-        const t = i / rate;
-        x[i] = bp(rand()) * env(t, 0.0005, 0.004) + 0.4 * Math.sin(TAU * 1800 * t) * env(t, 0.0005, 0.006);
+        const n = rand() * env(i / rate, 0.0002, 0.0015);
+        x[i] = snap(n) + 0.6 * body(n);
       }
-      return normalize(x, 0.18);
+      return normalize(x, 0.16);
     }
     case 'error': {
-      const x = buffer(rate, 0.22);
-      const lp = lowpass(rate, 1400);
-      for (let i = 0; i < x.length; i++) {
-        const t = i / rate;
-        let v = 0;
-        for (const f of [196, 207]) for (let k = 1; k <= 7; k += 2) v += Math.sin(TAU * k * f * t) / k;
-        x[i] = lp(v) * env(t, 0.004, 0.07);
-      }
-      return normalize(x, 0.35);
+      // A clam: E and F together, muted, through too much gain.
+      const x = buffer(rate, 0.2);
+      const rand = noise(13);
+      pluck(x, rate, 0, 82.41, 0.12, 1, rand);
+      pluck(x, rate, 0.004, 87.31, 0.12, 1, rand);
+      return normalize(amp(x, rate, 10, 3000), 0.32);
     }
     case 'count':
     case 'countAccent': {
-      const f = name === 'count' ? 1000 : 1500;
+      // The drummer counting in on the sticks; the first count harder.
       const x = buffer(rate, 0.08);
-      for (let i = 0; i < x.length; i++) {
-        const t = i / rate;
-        x[i] = (Math.sin(TAU * f * t) + 0.4 * Math.sin(TAU * 2.7 * f * t) * Math.exp(-t / 0.006)) * env(t, 0.0008, 0.016);
-      }
-      return normalize(x, 0.5);
+      sticks(x, rate, name === 'count' ? 1900 : 2300, 1, noise(name === 'count' ? 17 : 19));
+      return normalize(x, name === 'count' ? 0.42 : 0.55);
     }
     case 'streak': {
-      const x = buffer(rate, 0.75);
-      [784, 988, 1175, 1568].forEach((f, k) => bell(x, rate, k * 0.055, f, 1 - k * 0.12, 0.28));
-      return normalize(x, 0.32);
+      // A pick slide down the low strings.
+      const x = buffer(rate, 0.55);
+      scrape(x, rate, 0, 0.5, 1400, 300, 1, noise(21));
+      return normalize(amp(x, rate, 4), 0.32);
     }
     case 'levelUp': {
+      // A pick slide up, ending on a pinched harmonic that squeals.
       const x = buffer(rate, 0.6);
-      bell(x, rate, 0, 1175, 1, 0.25);
-      bell(x, rate, 0.09, 1760, 0.9, 0.3);
-      return normalize(x, 0.28);
+      const rand = noise(27);
+      scrape(x, rate, 0, 0.22, 300, 1300, 1, rand);
+      pluck(x, rate, 0.2, 1318.5, 0.9, 0.5, rand);
+      return normalize(amp(x, rate, 5, 5000), 0.28);
     }
     case 'grade': {
-      const x = buffer(rate, 0.9);
+      // An E5 left ringing, until the amp starts to feed back.
+      const x = buffer(rate, 1.3);
       const rand = noise(23);
-      const lp = lowpass(rate, 1500);
-      let ph = 0;
-      for (let i = 0; i < x.length; i++) {
-        const t = i / rate;
-        ph += (45 + 95 * Math.exp(-t / 0.08)) / rate;
-        x[i] = Math.sin(TAU * ph) * env(t, 0.003, 0.25) + 0.5 * lp(rand()) * env(t, 0.001, 0.04);
-      }
-      bell(x, rate, 0.02, 2093, 0.12, 0.4);
-      return normalize(x, 0.6);
+      powerChord(x, rate, 0, 82.41, 2.5, 1, rand);
+      feedback(x, rate, 0.45, 659.26, 0.05);
+      return normalize(room(amp(x, rate, 8), rate, 0.25), 0.6);
     }
     case 'fanfare': {
-      const x = buffer(rate, 1.5);
-      const notes: [number, number, number][] = [
-        [0, 523.25, 0.12],
-        [0.12, 659.25, 0.12],
-        [0.24, 783.99, 0.12],
-        [0.36, 1046.5, 0.9],
-      ];
-      for (const [at, f, hold] of notes) {
-        const lp = lowpass(rate, 2600);
-        let ph = 0;
-        const s0 = Math.round(at * rate);
-        const s1 = Math.min(x.length, Math.round((at + hold + 0.25) * rate));
-        for (let i = s0; i < s1; i++) {
-          const t = (i - s0) / rate;
-          ph += (f * (1 + (t > 0.15 ? 0.006 * Math.sin(TAU * 5.5 * t) : 0))) / rate;
-          const e = Math.min(1, t / 0.015) * (t < hold ? 1 : Math.exp(-(t - hold) / 0.08));
-          x[i] += lp(saw(ph, 10)) * e;
-        }
-      }
-      return normalize(x, 0.4);
+      // A garage riff: two chugs, then G5 and A5 left ringing.
+      const x = buffer(rate, 1.6);
+      const rand = noise(29);
+      powerChord(x, rate, 0, 82.41, 0.08, 1, rand);
+      powerChord(x, rate, 0.14, 82.41, 0.08, 1, rand);
+      powerChord(x, rate, 0.28, 98.0, 0.3, 1, rand);
+      powerChord(x, rate, 0.42, 110.0, 2, 1, rand);
+      return normalize(room(amp(x, rate, 8), rate, 0.25), 0.45);
     }
     case 'crowd': {
-      // A room full: talkers at different distances, a low rumble, now and then a shout.
+      // A small club before the band: a few talkers, a low rumble, the amps humming on stage,
+      // a bottle now and then, a shout, a whistle; the room's walls close by.
       const x = buffer(rate, 8.6);
       const rand = noise(31);
-      babble(x, rate, 18, 1, rand);
+      babble(x, rate, 10, 1, rand);
       const lp = lowpass(rate, 180);
-      for (let i = 0; i < x.length; i++) x[i] += 0.6 * lp(rand());
-      for (const at of [1.3, 3.9, 6.2]) woo(x, rate, 1, at, 0.7, 0.35, rand);
-      return normalize(loopable(x, rate, 0.6), 0.55);
+      for (let i = 0; i < x.length; i++) {
+        const t = i / rate;
+        x[i] += 0.6 * lp(rand()) + 0.03 * (Math.sin(TAU * 50 * t) + 0.5 * Math.sin(TAU * 150 * t) + 0.25 * Math.sin(TAU * 250 * t));
+      }
+      for (const at of [1.3, 6.2]) woo(x, rate, 1, at, 0.7, 0.35, rand);
+      for (const at of [0.7, 2.9, 5.1, 7.4]) bell(x, rate, at, 3600 + 900 * Math.abs(rand()), 0.06, 0.05);
+      whistle(x, rate, 4.1, 0.5, 2900, 0.12, rand);
+      return normalize(loopable(room(x, rate, 0.35), rate, 0.6), 0.55);
     }
     case 'cheer': {
       const x = buffer(rate, 3.6);
@@ -331,10 +427,11 @@ export function synthesize(name: SoundName, rate: number): Float32Array {
         const t = i / rate;
         x[i] = x[i] * Math.min(1, t / 0.25) * Math.min(1, (3.6 - t) / 1.2) + 0.8 * claps[i];
       }
-      return normalize(x, 0.7);
+      for (const [at, f] of [[0.3, 2800], [0.9, 3300], [1.6, 3000]]) whistle(x, rate, at, 0.6, f, 0.25, rand);
+      return normalize(room(x, rate, 0.35), 0.7);
     }
     case 'applause':
-      return normalize(applause(rate, 5, 36, 53), 0.6);
+      return normalize(room(applause(rate, 5, 36, 53), rate, 0.35), 0.6);
     case 'clapping': {
       // Clapping in time, two claps a second, as a crowd calls for one more song.
       // Made half a second longer, the end blended into the start: four seconds that loop.
@@ -346,7 +443,7 @@ export function synthesize(name: SoundName, rate: number): Float32Array {
         const loud = 0.5 + 0.5 * Math.abs(rand());
         for (let beat = 0; beat < 9; beat++) clap(x, rate, beat / 2 + 0.012 * (rand() + 1), hand, loud, rand);
       }
-      return normalize(loopable(x, rate, 0.5), 0.6);
+      return normalize(loopable(room(x, rate, 0.25), rate, 0.5), 0.6);
     }
   }
 }

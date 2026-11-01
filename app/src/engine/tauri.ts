@@ -146,6 +146,10 @@ export class TauriEngine implements Engine {
     void invoke('set_bed', { name, gain });
   }
 
+  preview(id: string | null, gain: number): void {
+    invoke('preview_song', { id, gain }).catch((e) => console.warn('extrait indisponible', e));
+  }
+
   play(): void {
     this.running = true;
     void invoke('play');
@@ -209,6 +213,11 @@ export class TauriEngine implements Engine {
   /** How forgiving the judge is (lenient, normal, strict), from the next song. */
   setJudging(name: string): void {
     void invoke('set_judging', { name });
+  }
+
+  /** Wait mode (lessons): the song stops on each note or chord until the guitar plays it. */
+  setWait(on: boolean): void {
+    void invoke('set_wait', { on });
   }
 
   /** Records what the guitar plays during songs (takes, to tune the detection offline). */

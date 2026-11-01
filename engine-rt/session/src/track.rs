@@ -21,6 +21,26 @@ pub fn load_track_with_stem(path: &Path, guitar: &Path, sample_rate: u32) -> Res
     Ok(load_track(path, sample_rate)?.with_stem(&data, channels))
 }
 
+/// `seconds` of a WAV from `start` s, its channels mixed to one, at the file's own rate (no
+/// decoding of the rest: a song's preview); the rate is returned with the samples.
+pub fn read_excerpt(path: &Path, start: f64, seconds: f64) -> Result<(Vec<f32>, u32), TrackError> {
+    let err = |e: hound::Error| TrackError::Wav(path.display().to_string(), e);
+    let mut reader = hound::WavReader::open(path).map_err(err)?;
+    let spec = reader.spec();
+    let channels = spec.channels.max(1) as usize;
+    let first = ((start.max(0.0) * f64::from(spec.sample_rate)) as u32).min(reader.duration());
+    reader.seek(first).map_err(|e| err(hound::Error::IoError(e)))?;
+    let n = (seconds * f64::from(spec.sample_rate)) as usize * channels;
+    let data: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().take(n).collect::<Result<_, _>>().map_err(err)?,
+        hound::SampleFormat::Int => {
+            let scale = 1.0 / (1u64 << (spec.bits_per_sample.clamp(1, 32) - 1)) as f32;
+            reader.samples::<i32>().take(n).map(|s| s.map(|v| v as f32 * scale)).collect::<Result<_, _>>().map_err(err)?
+        }
+    };
+    Ok((data.chunks(channels).map(|f| f.iter().sum::<f32>() / channels as f32).collect(), spec.sample_rate))
+}
+
 /// Interleaved samples at `sample_rate` and their channel count.
 fn decode(path: &Path, sample_rate: u32) -> Result<(Vec<f32>, usize), TrackError> {
     let err = |e: hound::Error| TrackError::Wav(path.display().to_string(), e);

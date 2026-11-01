@@ -35,13 +35,15 @@ struct Bed {
 pub(crate) struct Sfx {
     voices: Vec<Voice>,
     bed: Option<Bed>,
+    /// The background sound another replaced, fading out under it.
+    fading: Option<Bed>,
     /// Per-frame step of the background gain toward its target.
     glide: f32,
 }
 
 impl Sfx {
     pub(crate) fn new(sample_rate: f64) -> Sfx {
-        Sfx { voices: Vec::with_capacity(VOICES), bed: None, glide: (1.0 - (-1.0 / (GLIDE * sample_rate)).exp()) as f32 }
+        Sfx { voices: Vec::with_capacity(VOICES), bed: None, fading: None, glide: (1.0 - (-1.0 / (GLIDE * sample_rate)).exp()) as f32 }
     }
 
     /// Plays `sound` at `gain`, now or once the track reaches frame `at`.
@@ -51,11 +53,17 @@ impl Sfx {
         }
     }
 
-    /// The background sound glides to `gain`; another sound starts over at `gain`; none fades out.
+    /// The background sound glides to `gain`; another sound rises to `gain` from its start as the
+    /// one before fades out; none fades out.
     pub(crate) fn bed(&mut self, sound: Option<Sound>, gain: f32) {
         match (sound, &mut self.bed) {
             (Some(s), Some(b)) if Arc::ptr_eq(&s, &b.sound) => b.target = gain,
-            (Some(s), _) if s.len() >= 2 => self.bed = Some(Bed { sound: s, pos: 0, gain: 0.0, target: gain }),
+            (Some(s), _) if s.len() >= 2 => {
+                if let Some(mut old) = self.bed.replace(Bed { sound: s, pos: 0, gain: 0.0, target: gain }) {
+                    old.target = 0.0;
+                    self.fading = Some(old);
+                }
+            }
             (_, Some(b)) => b.target = 0.0,
             _ => {}
         }
@@ -97,15 +105,17 @@ impl Sfx {
                 k += 1;
             }
         }
-        if let Some(b) = &mut self.bed {
-            let len = b.sound.len() / 2;
-            for frame in out.chunks_mut(channels) {
-                b.gain += (b.target - b.gain) * self.glide;
-                mix(frame, b.sound[2 * b.pos] * b.gain, b.sound[2 * b.pos + 1] * b.gain);
-                b.pos = (b.pos + 1) % len;
-            }
-            if b.target == 0.0 && b.gain < 1e-4 {
-                self.bed = None;
+        for slot in [&mut self.bed, &mut self.fading] {
+            if let Some(b) = slot {
+                let len = b.sound.len() / 2;
+                for frame in out.chunks_mut(channels) {
+                    b.gain += (b.target - b.gain) * self.glide;
+                    mix(frame, b.sound[2 * b.pos] * b.gain, b.sound[2 * b.pos + 1] * b.gain);
+                    b.pos = (b.pos + 1) % len;
+                }
+                if b.target == 0.0 && b.gain < 1e-4 {
+                    *slot = None;
+                }
             }
         }
     }

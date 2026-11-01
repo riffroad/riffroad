@@ -618,3 +618,62 @@ fn sounds_are_played_at_the_output_rate_by_name() {
     assert!((180..=200).contains(&loud), "{loud} frames at the sound's level");
     assert!(left[260..].iter().all(|v| v.abs() < 1e-3), "and nothing after it");
 }
+
+#[test]
+fn in_wait_mode_the_song_stops_on_each_note_until_the_guitar_plays_it() {
+    // The guitarist only plays once the song stopped, 0.8 s later, chords as well as notes.
+    const REACT: f64 = 0.8;
+    const SONG: f64 = 12.0;
+    let chart = chart();
+    let mut rig = Rig::new(vec![0.0; input_index(heard_at(chart.meta.duration) + 120.0)]);
+    rig.session.load(chart.clone(), Some(silent_track(chart.meta.duration)), -COUNT_IN);
+    rig.session.set_wait(true);
+    rig.session.play();
+    let mut targets = std::collections::HashMap::new();
+    let (mut seen, mut waits, mut host) = (0, Vec::new(), 0.0);
+    let mut rng = Pcg32::new(5);
+    while host < 90.0 {
+        host += 0.005;
+        rig.run(host);
+        for e in &rig.events[seen..] {
+            match e {
+                UiEvent::Expected { items, .. } => targets.extend(items.iter().map(|i| (i.index, (i.time, i.target.clone())))),
+                UiEvent::Waiting { index } => {
+                    let (time, target) = targets[index].clone();
+                    if time > SONG {
+                        continue;
+                    }
+                    waits.push(*index);
+                    let midis = match target {
+                        UiTarget::Note { midi, .. } => vec![midi],
+                        UiTarget::Chord { midis, .. } => midis,
+                    };
+                    let at = input_index(host + REACT);
+                    for (j, m) in midis.iter().enumerate() {
+                        let mut p = Pluck::new(440.0 * 2f32.powf((m - 69) as f32 / 12.0));
+                        p.secs = 0.6;
+                        p.amp = if midis.len() > 1 { 0.22 } else { 0.4 };
+                        let sound = p.render(SR as f32, &mut rng);
+                        mix_into(&mut rig.guitar, &sound, at + j * (0.008 * SR) as usize, 1.0);
+                    }
+                }
+                _ => {}
+            }
+        }
+        seen = rig.events.len();
+        if waits.len() > 3 && targets.get(waits.last().unwrap()).is_some_and(|t| t.0 > SONG - 1.0) {
+            break;
+        }
+    }
+    let o = outcome(&rig.events);
+    let early: Vec<usize> = targets.iter().filter(|(_, t)| t.0 <= SONG - 1.0).map(|(i, _)| *i).collect();
+    println!("{} waits, {} hits, {} misses, stopped on {} of the {} notes and chords before {} s", waits.len(), o.hits.len(), o.misses, early.iter().filter(|i| waits.contains(i)).count(), early.len(), SONG - 1.0);
+    assert!(early.len() > 10, "the test plays a dozen notes and chords at least");
+    assert!(early.iter().any(|i| matches!(targets[i].1, UiTarget::Chord { .. })), "chords among them");
+    assert!(early.iter().all(|i| waits.contains(i)), "the song stopped on every one of them");
+    assert_eq!(o.misses, 0, "none missed, however late they were played");
+    assert!(o.hits.len() >= early.len(), "each counted");
+    assert!(o.hits.iter().all(|h| h.0.abs() < 1e-6 && h.1), "on the beat: the song waited for them");
+    // It stood still: twelve seconds of song took more than REACT longer each.
+    assert!(host > heard_at(SONG - 1.0) + REACT * early.len() as f64);
+}

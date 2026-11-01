@@ -460,3 +460,17 @@ fn the_crowd_loops_glides_to_its_level_and_fades_out() {
     let left = run(&mut b, 3_000, 4_000);
     assert_eq!(*left.last().unwrap(), 0.0, "faded out and stopped");
 }
+
+#[test]
+fn another_background_takes_over_while_the_first_fades_out() {
+    let mut b = bridge();
+    b.monitor.send(PlayerCommand::Bed { sound: Some(flat(1_000, 1.0)), gain: 0.5 });
+    let left = run(&mut b, 0, 1_500);
+    assert!((left.last().unwrap() - 0.5).abs() < 0.01);
+    // A song's preview in place of the crowd: no drop to silence, the sum glides to the new level.
+    b.monitor.send(PlayerCommand::Bed { sound: Some(flat(1_000, 1.0)), gain: 0.8 });
+    let left = run(&mut b, 1_500, 1_500);
+    assert!(left[0] > 0.49, "the first does not stop dead: {}", left[0]);
+    assert!(left.windows(2).all(|w| (w[1] - w[0]).abs() < 0.01), "no jump");
+    assert!((left.last().unwrap() - 0.8).abs() < 0.01, "then only the new one: {}", left.last().unwrap());
+}

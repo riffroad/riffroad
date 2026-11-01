@@ -103,4 +103,7 @@ export interface Engine {
   sound(name: SoundName, gain: number, at?: number): void;
   /** The looping background sound (the crowd) glides to `gain`; null fades it out. */
   bed(name: SoundName | null, gain: number): void;
+  /** The song `id` plays in the background as the background sound (its chorus, looping, at
+   * `gain`), as when browsing songs; null fades it out. */
+  preview?(id: string | null, gain: number): void;
 }

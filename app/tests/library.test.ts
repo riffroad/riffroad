@@ -81,6 +81,7 @@ describe('arrangements of a song', () => {
 
   it('lists the song first, then its other arrangements', () => {
     expect(partsOf(song).map(partLabel)).toEqual(['Lead', 'Basse', 'Rythmique']);
+    expect(partLabel(part('nd/song_chart.chords.json', 'Chords', 'rhythm'))).toBe('Accords');
     expect(partsOf(part('x', 'Lead', 'lead'))).toHaveLength(1);
   });
 

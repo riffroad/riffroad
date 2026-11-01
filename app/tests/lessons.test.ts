@@ -126,3 +126,17 @@ describe('recording sessions', () => {
     expect(passed(all[at('record-chords')], { 'record-chords': 1 })).toBe(false);
   });
 });
+
+describe('lesson pace', () => {
+  it('stretches every step and the metronome, the notes staying on their beats', async () => {
+    const { lessonChart, lessons, paceFactor } = await import('../src/lessons');
+    const lesson = lessons().find((l) => l.id === 'record-notes')!;
+    const normal = lessonChart(lesson, 0);
+    const slow = lessonChart(lesson, 0, paceFactor('slow'));
+    expect(slow.tempo.bpm).toBe(30);
+    expect(slow.meta.duration).toBeCloseTo(2 * normal.meta.duration, 6);
+    expect(slow.notes[1].time - slow.notes[0].time).toBeCloseTo(4, 6);
+    expect(normal.notes[1].time - normal.notes[0].time).toBeCloseTo(2, 6);
+    expect(slow.beats[8].time).toBeCloseTo(2 * normal.beats[8].time, 6);
+  });
+});

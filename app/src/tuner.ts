@@ -29,6 +29,27 @@ export const TUNINGS: readonly { name: string; strings: readonly number[] }[] = 
   { name: 'Open D', strings: [38, 45, 50, 54, 57, 62] },
 ];
 
+/** A tuning the guitar is in: open strings, low first, and cents off A440 (a recording's pitch). */
+export interface HeldTuning {
+  name: string;
+  strings: readonly number[];
+  cents: number;
+}
+
+/** `guitarTuning` setting: songs moved to the tuning the guitar was last tuned to. */
+export const LAST_TUNING = 'last';
+
+/** The tuning songs are moved to, from the setting (null: each song in its own, the player retunes). */
+export function guitarFor(setting: string, held: HeldTuning | null): { name: string; strings: readonly number[] } | null {
+  if (setting === LAST_TUNING) return held && { name: held.name, strings: held.strings };
+  return TUNINGS.find((x) => x.name === setting) ?? null;
+}
+
+/** Whether the guitar must be tuned before playing in `tuning`: it is not known to be in it. */
+export function mustTune(tuning: HeldTuning, held: HeldTuning | null): boolean {
+  return !held || held.strings.join() !== tuning.strings.join() || Math.abs(held.cents - tuning.cents) >= IN_TUNE_CENTS;
+}
+
 export const centsOff = (midi: number, target: number): number => (midi - target) * 100;
 
 /**

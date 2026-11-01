@@ -23,13 +23,13 @@ import { Highway } from './highway/highway';
 import { isScenery, SCENERIES, type SceneryId } from './highway/scenery';
 import { Hud } from './hud';
 import { Imports } from './imports';
-import { Library, partLabel, partsOf, type LibraryPurpose } from './library';
+import { arrangementLabel, Library, partLabel, partsOf, type LibraryPurpose } from './library';
 import { gradeFor, record, recordAttack, recordPass, type Progress } from './progress';
 import { AttackHud, attackLevel, AttackRun, attackStartLevel, attackSummary, STRIKES, type AttackDifficulty } from './score-attack';
 import { accelerated, countNotes, percent, riffLoop, RiffPanel, roundSpeed, type PhraseState, type RiffChoice } from './riff';
 import type { RiffLoop } from './engine/types';
 import { phraseLabels } from './sections';
-import { Tuner, TUNINGS } from './tuner';
+import { guitarFor, LAST_TUNING, mustTune, Tuner, TUNINGS, type HeldTuning } from './tuner';
 import { AMP_MODELS, AmpPanel, DEFAULT_AMP, preset, sanitizeAmp, type AmpModelName, type AmpSettings } from './amp';
 import { Welcome, welcomed, type WelcomePart } from './welcome';
 import {
@@ -65,7 +65,7 @@ import {
 import { guitarOf } from './guitars';
 import { award, careerTrophies, perfectSolo, songTrophies, TROPHIES, type GigFeat, type Trophy } from './trophies';
 import { announce, showTrophies } from './trophy-board';
-import { lessonChart, lessons, loadLessons, nextLesson, passed, recordLesson } from './lessons';
+import { lessonChart, lessons, loadLessons, nextLesson, paceFactor, passed, recordLesson, type LessonPace } from './lessons';
 import { LessonsScreen } from './lessons-screen';
 import { interfaceSounds, SoundBoard } from './sfx';
 import { SOUND_NAMES, type SoundName } from './sounds';
@@ -97,7 +97,8 @@ interface Settings extends GuitarValues {
   masterMode: boolean;
   /** Takes of what the guitar plays during songs, to tune the detection. */
   recordTakes: boolean;
-  /** The tuning the guitar stays in, songs transposed to it ('': retuned for each song). */
+  /** The tuning the guitar stays in, songs transposed to it (LAST_TUNING: the one it was last tuned to;
+   * '': retuned for each song). */
   guitarTuning: string;
   /** A steady lag at the end of a song is compensated without asking. */
   autoLatency: boolean;
@@ -120,7 +121,7 @@ const DEFAULTS: Settings = {
   riffAccelerate: true,
   masterMode: true,
   recordTakes: false,
-  guitarTuning: '',
+  guitarTuning: LAST_TUNING,
   autoLatency: true,
   judging: 'normal',
   scenery: 'concert',
@@ -216,6 +217,7 @@ let backlog: GameEvent[] = [];
 const form = $<HTMLFormElement>('settings');
 (form.elements.namedItem('scenery') as HTMLSelectElement).replaceChildren(...SCENERIES.map((s) => new Option(s.label, s.id)));
 (form.elements.namedItem('guitarTuning') as HTMLSelectElement).replaceChildren(
+  new Option(t('Le dernier où je l’ai accordée (morceaux décalés vers lui)'), LAST_TUNING),
   new Option(t('Celui de chaque morceau (je réaccorde)'), ''),
   ...TUNINGS.map((x) => new Option(x.name, x.name)),
 );
@@ -362,7 +364,12 @@ function wearGuitar(): void {
   select.value = career.guitar;
 }
 
+/** A song's preview in the library, against its level in play: in the background. */
+const PREVIEW_GAIN = 0.6;
+
 function setMode(next: Mode): void {
+  // Leaving the library (a song chosen, or back to the menu): its preview stops.
+  if (mode === 'library' && next !== 'library') engine.preview?.(null, 0);
   mode = next;
   // The hardware strip in the menus; the game's own HUD takes the top during a song.
   hwHud.show(['menu', 'library', 'imports', 'settings', 'career', 'trophies', 'amp', 'lessons'].includes(next));
@@ -400,7 +407,7 @@ function showPause(): void {
   if (!chart || !view) return;
   $('pauseCover').replaceChildren(cover(chart, 'pause-cover'));
   $('pauseTitle').textContent = chart.meta.title;
-  $('pauseMeta').textContent = [chart.meta.artist, chart.arrangement.tuning.name, chart.arrangement.name].filter(Boolean).join(' · ');
+  $('pauseMeta').textContent = [chart.meta.artist, chart.arrangement.tuning.name, arrangementLabel(chart.arrangement.name)].filter(Boolean).join(' · ');
   const at = Math.max(0, songTime);
   $('pauseBar').style.width = `${Math.min(1, at / Math.max(chart.meta.duration, 1)) * 100}%`;
   const where = riff
@@ -839,6 +846,7 @@ function onPass(pass: Pass): void {
 function openTuner(song: Chart | null): void {
   if (!(engine instanceof TauriEngine)) return;
   guitarSettings.close();
+  tunerFor = song;
   setMode('tuner');
   engine.setTuner(true);
   const tuning = song?.arrangement.tuning;
@@ -846,9 +854,42 @@ function openTuner(song: Chart | null): void {
   tuner.open(tuning?.strings ?? STANDARD, tuning?.name ?? 'E Standard', song?.meta.title, song ? cover(song, 'tuner-cover-art') : null, tuning?.cents ?? 0);
 }
 
+/** The tuning the guitar was last tuned to for a song (kept between launches), and whether that
+ * was since the app started (a guitar left aside drifts). */
+const GUITAR_TUNED = 'opensmith.guitar-tuned';
+let guitarTuned: HeldTuning | null = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(GUITAR_TUNED) ?? 'null') as HeldTuning | null;
+  } catch {
+    return null;
+  }
+})();
+let tunedSinceLaunch = false;
+/** Wait mode's hint was shown for this lesson; the note the song stopped on. */
+let waitHinted = false;
+let waitingOn: number | null = null;
+/** The song (or lesson) the tuner is open for (null: on its own, any tuning). */
+let tunerFor: Chart | null = null;
+
+/** The tuner before `song` only when the guitar may not be in its tuning: first song since the
+ * app started, or another tuning (the setting moves songs to the guitar's where it can). */
+const tunerNeeded = (song: Chart): boolean => engine instanceof TauriEngine && (!tunedSinceLaunch || mustTune(tuningOf(song), guitarTuned));
+
+const tuningOf = (song: Chart): HeldTuning => ({ name: song.arrangement.tuning.name, strings: song.arrangement.tuning.strings, cents: song.arrangement.tuning.cents ?? 0 });
+
 /** Tuned (or skipped): the song starts (or its Loop Trainer); on its own, back to the menu. */
 function finishTuner(): void {
   if (engine instanceof TauriEngine) engine.setTuner(false);
+  if (tunerFor) {
+    guitarTuned = tuningOf(tunerFor);
+    tunerFor = null;
+    tunedSinceLaunch = true;
+    try {
+      localStorage.setItem(GUITAR_TUNED, JSON.stringify(guitarTuned));
+    } catch {
+      // no storage: the tuner opens for the next song
+    }
+  }
   tuner.close();
   if (!chart) showMenu();
   else if (riffFirst) riffFromLibrary();
@@ -929,15 +970,24 @@ async function showAudioStatus(): Promise<void> {
   }
 }
 
-/** The songs of the library (charts made by the pipeline). */
-async function loadLibrary(): Promise<SongEntry[]> {
-  try {
-    songs = await engine.library();
-  } catch (e) {
-    console.error(e);
-  }
-  updateMenu();
-  return songs;
+/** The songs of the library (charts made by the pipeline). A call while the library is being
+ * read waits for that reading, then reads it once more (one reading at a time). */
+let reading: Promise<SongEntry[]> | null = null;
+let readAgain: Promise<SongEntry[]> | null = null;
+function loadLibrary(): Promise<SongEntry[]> {
+  if (reading) return (readAgain ??= reading.then(() => ((readAgain = null), loadLibrary())));
+  reading = (async () => {
+    try {
+      songs = await engine.library();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      reading = null;
+    }
+    updateMenu();
+    return songs;
+  })();
+  return reading;
 }
 
 const library = new Library($('library'), {
@@ -956,14 +1006,18 @@ const library = new Library($('library'), {
     void start(id);
   },
   back: () => showMenu(),
+  preview: (song) => engine.preview?.(song?.id ?? null, (settings.backingVolume * settings.masterVolume) ** 2 * PREVIEW_GAIN),
 });
 
 async function openLibrary(purpose: LibraryPurpose): Promise<void> {
   libraryPurpose = purpose;
   setMode('library');
   library.show(songs, progress, purpose);
+  // Read again for songs added or changed outside the app; the grid is redrawn only if there are
+  // (a song being clicked keeps its place and its card).
+  const before = JSON.stringify(songs);
   await loadLibrary();
-  if (mode === 'library') library.show(songs, progress, purpose);
+  if (mode === 'library' && JSON.stringify(songs) !== before) library.refresh(songs, progress);
 }
 
 /** The last song played (in whichever arrangement), to pick up where the player left. */
@@ -1040,6 +1094,8 @@ function openImports(): void {
 async function start(id: string, riffOpening = false): Promise<void> {
   lessonRun = null;
   recordFor(false);
+  // Wait mode is the lessons': a song keeps its time.
+  if (engine instanceof TauriEngine) engine.setWait(false);
   current = findSong(songs, id) ?? null;
   riffFirst = riffOpening;
   currentId = id;
@@ -1059,7 +1115,7 @@ async function start(id: string, riffOpening = false): Promise<void> {
   // The loading card only for a load long enough to be seen (a big backing track).
   const song = current;
   const shown = window.setTimeout(() => showLoading(song), 150);
-  if (engine instanceof TauriEngine) engine.guitar = TUNINGS.find((x) => x.name === settings.guitarTuning) ?? null;
+  if (engine instanceof TauriEngine) engine.guitar = guitarFor(settings.guitarTuning, guitarTuned);
   try {
     chart = await engine.load(id, progress[id]?.levels);
   } catch (e) {
@@ -1100,7 +1156,7 @@ async function start(id: string, riffOpening = false): Promise<void> {
     else restart();
     return;
   }
-  if (engine instanceof TauriEngine) openTuner(chart);
+  if (tunerNeeded(chart)) openTuner(chart);
   else if (riffFirst) riffFromLibrary();
   else restart();
 }
@@ -1200,9 +1256,9 @@ const careerScreen = new CareerScreen($('career'), {
   back: () => showMenu(),
 });
 
-const lessonsScreen = new LessonsScreen($('lessons'), (index) => {
+const lessonsScreen = new LessonsScreen($('lessons'), (index, pace) => {
   engine.unlock();
-  void startLesson(index);
+  void startLesson(index, pace);
 });
 
 /** The lessons, the one just played (or the next to pass) opened. */
@@ -1211,8 +1267,9 @@ function openLessons(picked?: number): void {
   setMode('lessons');
 }
 
-/** Lesson `index`, played over its metronome after the tuner. */
-async function startLesson(index: number): Promise<void> {
+/** Lesson `index`, played over its metronome after the tuner, at the `pace` chosen on the
+ * lessons screen (in wait mode, the song stops on each note until it is played). */
+async function startLesson(index: number, pace: LessonPace = lessonsScreen.pace): Promise<void> {
   const lesson = lessons()[index];
   if (!lesson) return;
   lessonRun = index;
@@ -1232,7 +1289,9 @@ async function startLesson(index: number): Promise<void> {
   attackHud.show(null);
   applyDemoSettings();
   try {
-    chart = await engine.loadLesson(lessonChart(lesson, index));
+    if (engine instanceof TauriEngine) engine.setWait(pace === 'wait');
+    waitHinted = false;
+    chart = await engine.loadLesson(lessonChart(lesson, index, paceFactor(pace)));
   } catch (e) {
     notice(t('Impossible d’ouvrir la leçon : {error}', { error: (e as Error).message }));
     sfx.ui('error');
@@ -1242,7 +1301,7 @@ async function startLesson(index: number): Promise<void> {
   view = new GameView(chart);
   highway.setChart(chart);
   hud.toast({ kind: 'phrase', title: lesson.title, detail: lesson.how[0] });
-  if (engine instanceof TauriEngine) openTuner(chart);
+  if (tunerNeeded(chart)) openTuner(chart);
   else restart();
 }
 
@@ -1971,6 +2030,10 @@ window.addEventListener('keydown', (e) => {
       else if (mode === 'interlude') nextGigSong();
       else if (mode === 'tuner') {
         if (tuner.allDone()) finishTuner();
+      } else if (mode === 'play' && waitingOn !== null) {
+        // Wait mode: that note is let go, the song goes on.
+        waitingOn = null;
+        engine.play();
       } else togglePause();
       break;
     case 'Escape':
@@ -2031,6 +2094,13 @@ function frame(ms: number): void {
     view.apply(f.events, f.time);
     for (const e of f.events) {
       if (e.type === 'takeSaved') hud.toast({ kind: 'phrase', title: t('Prise enregistrée'), detail: formatTime(e.seconds) });
+      // Wait mode: the note the song stopped on, and once per lesson what the stop means.
+      if (e.type === 'waiting') {
+        waitingOn = e.index;
+        if (!waitHinted) hud.toast({ kind: 'phrase', title: t('Le jeu t’attend'), detail: t('Place tes doigts, puis joue : ça repart. Espace pour passer une note.') });
+        waitHinted = true;
+      } else if ((e.type === 'hit' || e.type === 'miss') && e.index === waitingOn) waitingOn = null;
+      else if (e.type === 'reset') waitingOn = null;
     }
     for (const t of view.drainToasts()) {
       hud.toast(t);

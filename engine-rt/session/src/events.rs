@@ -37,6 +37,8 @@ pub enum UiEvent {
     Calibrated { offset: f64, spread: f64, hits: usize, total: usize },
     /// A take of what the guitar played was saved to `path` (`seconds` long).
     TakeSaved { path: String, seconds: f64 },
+    /// Wait mode: the song stopped on expected note `index` until the guitar plays it.
+    Waiting { index: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

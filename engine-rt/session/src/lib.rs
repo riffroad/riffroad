@@ -23,4 +23,4 @@ pub use history::TapHistory;
 pub use runner::{Command, Devices, EngineBackend, Poll, SessionHandle};
 pub use session::{AudioBackend, Judging, RiffLoop, Session, SessionConfig};
 pub use take::{Take, TakeError, TakeScore};
-pub use track::{load_track, load_track_with_stem, TrackError};
+pub use track::{load_track, load_track_with_stem, read_excerpt, TrackError};

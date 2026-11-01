@@ -46,6 +46,21 @@ export interface HighwaySettings {
 
 export const DEFAULT_HIGHWAY: HighwaySettings = { invertStrings: false, speed: 12, lookahead: 3 };
 
+/** Luminance of a string's colour at rest, under the bloom's threshold (0.62): a string glows
+ * only when it plays or is about to. The yellow A string, the brightest colour, would otherwise
+ * glow all the time. */
+const REST_LUMA = 0.5;
+export const restOf = (c: { r: number; g: number; b: number }): number => Math.min(1, REST_LUMA / (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b));
+
+/** The input's own noise (dBFS), followed under the guitar: down at once to a quieter frame, up
+ * at most `NOISE_RISE` dB a second (a note held does not become the floor). */
+const NOISE_RISE = 3;
+export const followNoise = (floorDb: number, db: number, dt: number): number => (db < floorDb ? db : floorDb + Math.min(db - floorDb, NOISE_RISE * dt));
+
+/** How much the strings ring (0..1) for a frame at `db` over the input's noise at `floorDb`: from
+ * 10 dB above it, fully 30 dB higher. A hiss or a hum never shakes a string. */
+export const ringOver = (db: number, floorDb: number): number => Math.min(1, Math.max(0, (db - floorDb - 10) / 30));
+
 /** Camera for a five-fret zone (zoom 1), relative to the strike line under the zone centre: low
  * behind the neck, the highway running toward the horizon. */
 const CAMERA = { fov: 48, height: 4.6, distance: 7.5, lookY: -0.6, lookZ: -14 };
@@ -113,6 +128,8 @@ interface StringLine {
   light: number;
   /** Out of a song: how much this string was the last one heard (it rings with the guitar). */
   ring: number;
+  /** Its brightness at rest: its colour held under the bloom's threshold (see `restOf`). */
+  rest: number;
 }
 
 interface Point {
@@ -213,6 +230,8 @@ export class Highway {
   private wall = 0;
   /** Out of a song: the guitar's level, the strings last heard ringing with it. */
   private ringLevel = 0;
+  /** The input's noise under the guitar (dBFS), see `followNoise`. */
+  private noiseDb = -54;
   private readonly stage: Stage;
   private readonly scenery: Scenery;
   private readonly mood: Mood = { pulse: 0, energy: 0.25, danger: 0, flash: 0 };
@@ -303,8 +322,9 @@ export class Highway {
   /** Out of a song: the guitar's level this frame (its loudest sample), the strings last heard
    * vibrating with it as long as they ring. */
   listen(peak: number, dt: number): void {
-    const level = Math.min(1, Math.max(0, (20 * Math.log10(Math.max(peak, 1e-6)) + 54) / 42));
-    this.ringLevel = Math.max(level, this.ringLevel * Math.exp(-dt / 0.12));
+    const db = 20 * Math.log10(Math.max(peak, 1e-6));
+    this.noiseDb = followNoise(this.noiseDb, db, dt);
+    this.ringLevel = Math.max(ringOver(db, this.noiseDb), this.ringLevel * Math.exp(-dt / 0.12));
   }
 
   /** Fireworks over the neck and a burst of light: the end of a great song. */
@@ -473,7 +493,8 @@ export class Highway {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.set(FRETS / 2, stringY(s, this.settings.invertStrings), 0);
       this.scene.add(mesh);
-      this.strings.push({ mesh, material, base, pulse: 0, miss: 0, held: 0, light: 0, ring: 0 });
+      material.color.multiplyScalar(restOf(base));
+      this.strings.push({ mesh, material, base, pulse: 0, miss: 0, held: 0, light: 0, ring: 0, rest: restOf(base) });
     });
 
     for (let f = 1; f <= FRETS; f++) {
@@ -909,7 +930,7 @@ export class Highway {
       const back = 1 - 0.5 * focus * (1 - line.light);
       line.material.color
         .copy(line.base)
-        .multiplyScalar((1 + 2.4 * line.pulse + 0.5 * line.held + 0.45 * line.light + 1.2 * ring) * back)
+        .multiplyScalar((line.rest + 2.4 * line.pulse + 0.5 * line.held + 0.45 * line.light + 1.2 * ring) * back)
         .lerp(RED, 0.5 * line.miss);
       line.mesh.position.y = stringY(s, inv) + 0.025 * Math.max(line.pulse, 0.7 * ring) * Math.sin(this.wall * 90 + s);
       const thick = 1 + 1.4 * line.pulse + 0.3 * line.held + 0.3 * line.light + 0.6 * ring;

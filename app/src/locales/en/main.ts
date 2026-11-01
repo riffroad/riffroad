@@ -257,6 +257,7 @@ export const MAIN: Record<string, string> = {
   'Joué en {tuning}': 'Played in {tuning}',
   'Morceau décalé de {shift} demi-ton': 'Song shifted {shift} semitone',
   'Morceau décalé de {shift} demi-tons': 'Song shifted {shift} semitones',
+  'Le dernier où je l’ai accordée (morceaux décalés vers lui)': 'The one I last tuned it to (songs moved to it)',
   'Celui de chaque morceau (je réaccorde)': 'Each song’s (I retune)',
   'Ma guitare reste accordée en': 'My guitar stays tuned in',
   'Les morceaux à quelques demi-tons de cet accordage sont décalés pour lui : pas besoin de réaccorder.': 'Songs a few semitones away from this tuning are shifted to it: no need to retune.',

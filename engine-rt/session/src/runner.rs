@@ -84,6 +84,8 @@ pub enum Command {
     Bed { name: Option<String>, gain: f32 },
     /// How forgiving the judge is, from the next song.
     Judging(Judging),
+    /// Wait mode on or off (lessons): the song stops on each note until the guitar plays it.
+    Wait(bool),
 }
 
 /// The devices a backend is built on: name fragments, `None` for the automatic choice.
@@ -255,6 +257,7 @@ where
                 Ok(Command::Sound { name, gain, at }) => session.play_sound(&name, gain, at),
                 Ok(Command::Bed { name, gain }) => session.set_bed(name, gain),
                 Ok(Command::Judging(j)) => session.set_judging(j),
+                Ok(Command::Wait(on)) => session.set_wait(on),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }

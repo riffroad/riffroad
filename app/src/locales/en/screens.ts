@@ -124,6 +124,7 @@ export const SCREENS: Record<string, string> = {
   'Phrases maîtrisées': 'Phrases mastered',
   'Rythmique': 'Rhythm',
   'Basse': 'Bass',
+  'Accords': 'Chords',
   'Arrangement': 'Arrangement',
   '{n} arrangements': '{n} arrangements',
   'Meilleure note': 'Best grade',

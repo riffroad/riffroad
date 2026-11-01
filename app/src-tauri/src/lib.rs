@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -16,7 +17,7 @@ use import::{Importer, Job, JobState, Origin, Pipeline, Queue, ORIGIN};
 use opensmith_audio::{list_devices, Engine, EngineConfig, InputKind};
 use opensmith_dsp::{AmpKnobs, AmpModel, ChainParams};
 use opensmith_game::Chart;
-use opensmith_session::{load_track, load_track_with_stem, metronome, Command, Devices, EngineBackend, Judging, RiffLoop, SessionConfig, SessionHandle, UiEvent};
+use opensmith_session::{load_track, load_track_with_stem, metronome, read_excerpt, Command, Devices, EngineBackend, Judging, RiffLoop, SessionConfig, SessionHandle, UiEvent};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
@@ -31,6 +32,8 @@ struct App {
     library: PathBuf,
     sample_rate: u32,
     charts: Charts,
+    /// Previews asked for: one still being read plays only if none was asked for since.
+    previews: Arc<AtomicU64>,
 }
 
 /// Songs read from their chart, kept while the chart file is unchanged: the library is read
@@ -565,6 +568,12 @@ fn set_bed(app: State<'_, App>, name: Option<String>, gain: f32) {
 }
 
 /// How forgiving the judge is (lenient, normal, strict), from the next song.
+/// Wait mode (lessons): the song stops on each note or chord until the guitar plays it.
+#[tauri::command]
+fn set_wait(app: State<'_, App>, on: bool) {
+    app.session.send(Command::Wait(on));
+}
+
 #[tauri::command]
 fn set_judging(app: State<'_, App>, name: String) -> Result<(), String> {
     let judging = Judging::by_name(&name).ok_or_else(|| format!("jugement inconnu : {name}"))?;
@@ -603,11 +612,77 @@ fn write_atomic(path: &Path, json: &str) -> Result<(), String> {
     fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-/// A song's picture (a library path from `library`), as raw JPEG bytes.
+/// Seconds of a song played while it is chosen in the library, and the fades at their ends (it
+/// loops).
+const PREVIEW_SECONDS: f64 = 30.0;
+const PREVIEW_FADES: (f64, f64) = (1.5, 2.5);
+
+/// The song `id` plays in the background, as when browsing songs: its chorus (else from a third
+/// of the way in), looping, at `gain`; `None` fades it out.
 #[tauri::command]
-fn song_cover(app: State<'_, App>, path: String) -> Result<tauri::ipc::Response, String> {
+async fn preview_song(app: State<'_, App>, id: Option<String>, gain: f32) -> Result<(), String> {
+    let asked = app.previews.fetch_add(1, Ordering::SeqCst) + 1;
+    let Some(id) = id else {
+        app.session.send(Command::Bed { name: None, gain: 0.0 });
+        return Ok(());
+    };
+    let path = resolve(&app.library, &id)?;
+    let (samples, rate) = tauri::async_runtime::spawn_blocking(move || preview_of(&path)).await.map_err(|e| e.to_string())??;
+    if app.previews.load(Ordering::SeqCst) == asked {
+        app.session.send(Command::AddSound { name: "preview".into(), rate: f64::from(rate), samples });
+        app.session.send(Command::Bed { name: Some("preview".into()), gain });
+    }
+    Ok(())
+}
+
+/// Where a song's preview starts (s of its audio): its first chorus, else a third of the way in.
+fn preview_start(chart: &Chart) -> f64 {
+    let chorus = chart.sections.iter().find(|s| {
+        let name = s.name.to_lowercase();
+        (name.contains("chorus") || name.contains("refrain")) && s.start > 5.0
+    });
+    let start = chorus.map_or(chart.meta.duration / 3.0, |s| s.start) + chart.audio.offset;
+    start.min(chart.meta.duration - PREVIEW_SECONDS).max(0.0)
+}
+
+/// PREVIEW_SECONDS of the recording of the chart at `path` (its mix, or its backing with the
+/// guitar's stem), mono at the files' rate, from `preview_start`, faded in and out.
+fn preview_of(path: &Path) -> Result<(Vec<f32>, u32), String> {
+    let chart = Chart::from_json(&fs::read_to_string(path).map_err(|e| format!("{} : {e}", path.display()))?).map_err(|e| e.to_string())?;
+    let files: Vec<&String> = match (&chart.audio.mix, &chart.audio.backing, &chart.audio.guitar) {
+        (Some(mix), _, _) => vec![mix],
+        (None, Some(backing), Some(guitar)) if path.with_file_name(guitar).is_file() => vec![backing, guitar],
+        (None, Some(backing), _) => vec![backing],
+        _ => return Err(format!("{} : pas d’enregistrement", path.display())),
+    };
+    let start = preview_start(&chart);
+    let (mut out, rate) = read_excerpt(&path.with_file_name(files[0]), start, PREVIEW_SECONDS).map_err(|e| e.to_string())?;
+    for name in &files[1..] {
+        // The guitar's stem, at the backing's rate (the importer writes both alike).
+        if let Ok((stem, r)) = read_excerpt(&path.with_file_name(name), start, PREVIEW_SECONDS)
+            && r == rate
+        {
+            out.iter_mut().zip(stem).for_each(|(o, v)| *o += v);
+        }
+    }
+    let r = f64::from(rate);
+    let (fade_in, fade_out) = ((PREVIEW_FADES.0 * r) as usize, (PREVIEW_FADES.1 * r) as usize);
+    let n = out.len();
+    for (i, v) in out.iter_mut().enumerate() {
+        *v *= (i as f32 / fade_in as f32).min(1.0) * ((n - i) as f32 / fade_out as f32).min(1.0);
+    }
+    Ok((out, rate))
+}
+
+/// A song's picture (a library path from `library`), as raw JPEG bytes. Read off the main thread:
+/// a library opening asks for the pictures of every tile it shows.
+#[tauri::command]
+async fn song_cover(app: State<'_, App>, path: String) -> Result<tauri::ipc::Response, String> {
     let file = resolve(&app.library, &path)?;
-    fs::read(&file).map(tauri::ipc::Response::new).map_err(|e| format!("{} : {e}", file.display()))
+    let bytes = tauri::async_runtime::spawn_blocking(move || fs::read(&file).map_err(|e| format!("{} : {e}", file.display())))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -714,6 +789,12 @@ struct OutputDevice {
     current: bool,
 }
 
+/// Whether a device with these sample rate ranges can run the engine at `rate`: the others
+/// (a virtual input at 96 kHz only) would fail to open, the engine staying on the device before.
+fn runs_at(rates: &[(u32, u32)], rate: u32) -> bool {
+    rates.iter().any(|&(lo, hi)| (lo..=hi).contains(&rate))
+}
+
 /// Where the sound can go: the Mac's speakers, headphones, an audio interface…
 #[tauri::command]
 async fn audio_outputs(app: State<'_, App>) -> Result<Vec<OutputDevice>, String> {
@@ -721,7 +802,7 @@ async fn audio_outputs(app: State<'_, App>) -> Result<Vec<OutputDevice>, String>
     let devices = tauri::async_runtime::spawn_blocking(list_devices).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
     Ok(devices
         .into_iter()
-        .filter(|d| d.output_channels > 0)
+        .filter(|d| d.output_channels > 0 && runs_at(&d.output_rates, app.sample_rate))
         .map(|d| OutputDevice { current: current.as_deref() == Some(d.name.as_str()), name: d.name })
         .collect())
 }
@@ -747,7 +828,7 @@ async fn audio_inputs(app: State<'_, App>) -> Result<Vec<InputDevice>, String> {
     let devices = tauri::async_runtime::spawn_blocking(list_devices).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
     Ok(devices
         .into_iter()
-        .filter(|d| d.input_channels > 0)
+        .filter(|d| d.input_channels > 0 && runs_at(&d.input_rates, app.sample_rate))
         .map(|d| InputDevice { current: current.as_deref() == Some(d.name.as_str()), rocksmith: d.rocksmith, name: d.name })
         .collect())
 }
@@ -900,7 +981,7 @@ pub fn run() {
                 }
                 let _ = handle.emit("import", job);
             }));
-            app.manage(App { session, library: root, sample_rate, charts: Charts::default() });
+            app.manage(App { session, library: root, sample_rate, charts: Charts::default(), previews: Arc::default() });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -911,6 +992,7 @@ pub fn run() {
             play_sound,
             set_bed,
             set_judging,
+            set_wait,
             play,
             pause,
             seek,
@@ -941,6 +1023,7 @@ pub fn run() {
             set_tuner,
             calibrate_latency,
             song_cover,
+            preview_song,
             read_progress,
             read_career,
             write_career,
@@ -960,6 +1043,62 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn devices_that_cannot_run_at_the_engine_rate_are_not_offered() {
+        assert!(runs_at(&[(44_100, 44_100), (48_000, 48_000), (96_000, 96_000)], 48_000));
+        assert!(runs_at(&[(8_000, 192_000)], 48_000));
+        assert!(!runs_at(&[(96_000, 96_000)], 48_000), "Wave Link's virtual inputs");
+        assert!(!runs_at(&[], 48_000));
+    }
+
+    #[test]
+    #[ignore = "the note tracker on the WAV in OPENSMITH_TRACK_WAV"]
+    fn notes_heard_in_a_recording() {
+        use opensmith_dsp::{NoteTracker as Tracker, TrackerConfig, TrackerEvent};
+        let Ok(wav) = std::env::var("OPENSMITH_TRACK_WAV") else { return };
+        let (x, _) = read_excerpt(Path::new(&wav), 0.0, 600.0).unwrap();
+        for db in [0.0f32, 6.0, 12.0, 20.0] {
+            let g = 10f32.powf(db / 20.0);
+            let mut tracker = Tracker::new(TrackerConfig::default());
+            let mut notes = Vec::new();
+            for block in x.chunks(128) {
+                let b: Vec<f32> = block.iter().map(|v| v * g).collect();
+                tracker.process(&b, |e| {
+                    if let TrackerEvent::NoteOn { midi, clarity, .. } = e {
+                        notes.push((midi, (clarity * 100.0) as i32));
+                    }
+                });
+            }
+            eprintln!("gain +{db} dB: {} notes {:?}", notes.len(), &notes[..notes.len().min(12)]);
+        }
+    }
+
+    #[test]
+    #[ignore = "opens every input of this Mac"]
+    fn which_inputs_open() {
+        for d in list_devices().unwrap().into_iter().filter(|d| d.input_channels > 0) {
+            let r = Engine::start(EngineConfig { input: Some(d.name.clone()), ..EngineConfig::default() });
+            eprintln!("{} ({} ch, {:?}, {}): {}", d.name, d.input_channels, d.input_rates, d.interface, r.map_or_else(|e| e.to_string(), |_| "ok".into()));
+        }
+    }
+
+    #[test]
+    #[ignore = "times the scan of the music folder in OPENSMITH_TIME_LIBRARY"]
+    fn library_scan_time() {
+        let Ok(root) = std::env::var("OPENSMITH_TIME_LIBRARY") else { return };
+        let charts = Charts::default();
+        for pass in ["first", "again"] {
+            let t = std::time::Instant::now();
+            let n = Index::of(Path::new(&root), &charts).songs.len();
+            eprintln!("{pass}: {n} songs in {:.2} s", t.elapsed().as_secs_f64());
+        }
+        for song in Index::of(Path::new(&root), &charts).songs.iter().filter(|s| s.has_audio).take(3) {
+            let t = std::time::Instant::now();
+            let (preview, rate) = preview_of(&Path::new(&root).join(&song.id)).unwrap();
+            eprintln!("preview of {}: {:.1} s of sound in {:.3} s", song.title, preview.len() as f64 / f64::from(rate), t.elapsed().as_secs_f64());
+        }
+    }
+
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
@@ -967,6 +1106,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("opensmith-app-{name}-{nanos}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_preview_starts_on_the_chorus_else_a_third_in_and_stays_inside_the_song() {
+        let mut song = Chart::from_json(&chart("Song", "song.mp3")).unwrap();
+        song.meta.duration = 240.0;
+        assert_eq!(preview_start(&song), 80.0);
+        let span = |name: &str, start: f64| opensmith_game::chart::Span { name: name.into(), start, end: start + 20.0 };
+        song.sections = vec![span("intro", 0.0), span("verse", 12.0), span("Chorus", 52.5), span("chorus", 110.0)];
+        song.audio.offset = 1.5;
+        assert_eq!(preview_start(&song), 54.0);
+        song.sections = vec![span("chorus", 225.0)];
+        assert_eq!(preview_start(&song), 240.0 - PREVIEW_SECONDS);
     }
 
     fn chart(title: &str, file: &str) -> String {
