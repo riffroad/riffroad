@@ -2571,9 +2571,13 @@ const progressLoaded = engine.progress
   .catch(() => {});
 
 if (engine instanceof TauriEngine) {
-  // The window opens hidden (macOS paints a web view white until its page shows): it appears
-  // once the menu and a first frame of the stage are drawn.
-  requestAnimationFrame(() => requestAnimationFrame(() => void getCurrentWindow().show()));
+  // The window opens hidden (macOS paints a web view white until its page shows), and a hidden
+  // page is given no frames: waiting for one left the window to the app's own 3 s fallback. It
+  // shows now, the menu built and a first frame of the stage drawn out of sight (its shaders
+  // compiled: 0.1 s that the first frame seen no longer pays).
+  highway.render(0, null, 0);
+  perf.log(t('fenêtre affichée'));
+  void getCurrentWindow().show();
   document.body.classList.add('live');
   engine.configureAmp(settings.amp);
   engine.setAutopilot(settings.autopilot);

@@ -294,6 +294,7 @@ export const MAIN: Record<string, string> = {
   'chargement du morceau': 'song loading',
   'piste de notes': 'note highway',
   'grille des morceaux': 'song grid',
+  'fenêtre affichée': 'window shown',
   // The weekly challenge (world.ts)
   'Défi mondial': 'World challenge',
   'Un morceau par semaine, un classement pour tous': 'One song a week, one board for everyone',

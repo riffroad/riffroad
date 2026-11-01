@@ -112,7 +112,8 @@ export class Perf {
    * events, and the rest (the main thread idle: the frame waited on the compositor or the GPU).
    */
   frame(ms: number): void {
-    const gap = ms - this.last;
+    // The first frame has none before it: its gap is the page's loading.
+    const gap = this.last ? ms - this.last : 0;
     this.last = ms;
     this.fps.frames++;
     if (ms - this.fps.since >= 1000) {
