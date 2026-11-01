@@ -466,6 +466,8 @@ struct Inner {
     child: Mutex<Option<(u32, Child)>>,
     /// Files the pipeline's plugins import: extension → command (`learn_formats`).
     formats: Mutex<Vec<(String, String)>>,
+    /// Held while the converter is installed (an import, or a chord fixed before any import).
+    installing: Mutex<()>,
 }
 
 impl Inner {
@@ -528,6 +530,40 @@ pub struct Importer {
 }
 
 impl Importer {
+    /// Replaces chords everywhere in an MP3's chord chart (`changes`: "G=Em"…) with the
+    /// converter's `chords` command, which makes the chart again; how many beats changed. The
+    /// converter a new version of the app brings is installed first, as before an import.
+    pub fn fix_chords(&self, chart: &Path, changes: &[String]) -> Result<u32, String> {
+        let pipeline = self.inner.pipeline.as_ref().ok_or("uv is not installed: run `brew install uv ffmpeg`")?;
+        if let Some(install) = &pipeline.install {
+            let _installing = self.inner.installing.lock().unwrap();
+            if install.needed() {
+                install.copy().map_err(|e| format!("could not copy the converter: {e}"))?;
+                let done = install.sync(&pipeline.program, &pipeline.path).output().map_err(|e| format!("uv sync did not start: {e}"))?;
+                if !done.status.success() {
+                    return Err(format!("installing the converter failed: {}", last_line(&done.stderr)));
+                }
+                let _ = fs::write(install.project().join(INSTALLED), install.fingerprint());
+            }
+        }
+        let mut cmd = Command::new(&pipeline.program);
+        cmd.args(&pipeline.args).arg("chords").arg(chart);
+        for change in changes {
+            cmd.arg("--set").arg(change);
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let done = cmd.env("PATH", &pipeline.path).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        if !done.status.success() {
+            return Err(last_line(&done.stderr));
+        }
+        #[derive(Deserialize)]
+        struct Done {
+            changed: u32,
+        }
+        serde_json::from_str::<Done>(&last_line(&done.stdout)).map(|d| d.changed).map_err(|e| e.to_string())
+    }
+
     /// Starts the worker, on the queue left by the last run if there is one.
     pub fn new(library: PathBuf, pipeline: Option<Pipeline>, notify: impl Fn(&Job) + Send + Sync + 'static) -> Importer {
         let state = resume(&library);
@@ -539,6 +575,7 @@ impl Importer {
             wake: Condvar::new(),
             child: Mutex::new(None),
             formats: Mutex::new(Vec::new()),
+            installing: Mutex::new(()),
         });
         let learner = inner.clone();
         thread::Builder::new().name("opensmith-formats".into()).spawn(move || learner.learn_formats()).expect("formats thread");
@@ -749,7 +786,13 @@ fn work(inner: &Inner) {
 
 /// Installs a built app's pipeline before the import `id`, which shows its progress (stage
 /// `install`). `Err(None)`: stopped (import cancelled or app closing), already reported.
+/// The last line a process wrote that says something.
+fn last_line(out: &[u8]) -> String {
+    String::from_utf8_lossy(out).lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default().trim().to_string()
+}
+
 fn install_pipeline(inner: &Inner, id: u32, install: &Install, pipeline: &Pipeline) -> Result<(), Option<String>> {
+    let _installing = inner.installing.lock().unwrap();
     update(inner, id, |j| {
         j.stage = Some("install".into());
         j.fraction = 0.0;
@@ -940,6 +983,20 @@ mod tests {
         let script = dir.join("fake-ingest.sh");
         fs::write(&script, format!("#!/bin/sh\nout=\"$4\"\n{body}\n")).unwrap();
         Pipeline { program: "/bin/sh".into(), args: vec![script.to_string_lossy().into_owned()], path: std::env::var("PATH").unwrap_or_default(), install: None }
+    }
+
+    #[test]
+    fn a_chord_fixed_runs_the_converter_on_the_chart_and_says_how_many_beats() {
+        let dir = scratch("fix-chords");
+        let chart = dir.join("song_chart.chords.json");
+        // The converter is asked `chords <chart> --set G=Em --set C=C5`, and answers on its last line.
+        let pipeline = fake(&dir, r#"[ "$1" = chords ] && [ "$3 $4 $5 $6" = "--set G=Em --set C=C5" ] && echo "$2" > "$2.done" && echo 'Loading…' && echo '{"changed": 12}'"#);
+        let importer = Importer::new(dir.join("library"), Some(pipeline), |_| {});
+        assert_eq!(importer.fix_chords(&chart, &["G=Em".into(), "C=C5".into()]), Ok(12));
+        assert!(dir.join("song_chart.chords.json.done").exists());
+        // A refusal comes back in the converter's words.
+        let failing = Importer::new(dir.join("library"), Some(fake(&dir, "echo 'not a chord chart: C/E at 1.00 s' >&2; exit 1")), |_| {});
+        assert_eq!(failing.fix_chords(&chart, &[]), Err("not a chord chart: C/E at 1.00 s".into()));
     }
 
     fn setup(name: &str, body: &str) -> (Importer, mpsc::Receiver<Job>, PathBuf, PathBuf) {

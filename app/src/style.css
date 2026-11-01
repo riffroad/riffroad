@@ -5055,6 +5055,36 @@ body.with-account-chip .hw-hud {
   margin: 8px 0 4px;
 }
 
+/* The song card's chords, an MP3's (library.ts): one corrected everywhere. */
+.card-chords {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+.card-chords h4 {
+  margin: 0;
+}
+.card-chords-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.chord-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chord-fix {
+  display: grid;
+  gap: 8px;
+}
+.chord-fix-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 /* The song card's difficulty (library.ts): Auto or a level for the whole song. */
 .card-level {
   display: grid;

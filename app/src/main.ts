@@ -1224,6 +1224,14 @@ const library = new Library($('library'), {
   },
   back: () => showMenu(),
   preview: (song) => engine.preview?.(song?.id ?? null, (settings.backingVolume * settings.masterVolume) ** 2 * PREVIEW_GAIN),
+  chords: (song) => (engine instanceof TauriEngine ? engine.songChords(song.id) : Promise.resolve([])),
+  fixChords: async (song, changes) => {
+    if (!(engine instanceof TauriEngine)) return 0;
+    const changed = await engine.fixChords(song.id, changes);
+    await loadLibrary();
+    if (mode === 'library') library.refresh(songs, progress);
+    return changed;
+  },
 });
 
 async function openLibrary(purpose: LibraryPurpose): Promise<void> {

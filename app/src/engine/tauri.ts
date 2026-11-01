@@ -5,7 +5,7 @@ import type { GameEvent } from '../game/types';
 import type { AmpSettings } from '../amp';
 import type { CareerStore } from '../career/career';
 import type { Progress, ProgressStore } from '../progress';
-import type { Engine, Frame, RiffLoop, SongEntry } from './types';
+import type { Engine, Frame, RiffLoop, SongChord, SongEntry } from './types';
 import type { SoundName } from '../sounds';
 
 interface PollView {
@@ -97,6 +97,16 @@ export class TauriEngine implements Engine {
     const read = await invoke<{ version: string; songs: SongEntry[] | null }>('library', { known: this.index.version });
     if (read.songs) this.index = { version: read.version, songs: read.songs };
     return this.index.songs;
+  }
+
+  /** The chords of an MP3's chord chart, to correct them (none for any other chart). */
+  songChords(id: string): Promise<SongChord[]> {
+    return invoke<SongChord[]>('song_chords', { id });
+  }
+
+  /** Replaces chords everywhere in an MP3's chord chart ("G=Em"…); how many beats changed. */
+  fixChords(id: string, changes: string[]): Promise<number> {
+    return invoke<number>('fix_chords', { id, changes });
   }
 
   coverUrl(song: SongEntry): Promise<string | null> {

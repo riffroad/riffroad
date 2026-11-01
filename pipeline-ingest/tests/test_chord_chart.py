@@ -111,3 +111,28 @@ def test_the_chord_chart_strums_each_beat_and_eases_the_low_levels(tmp_path):
     assert chart.templates[chart.events_at(2)[1][0].template].name == "C5"
     chart.save(tmp_path / "song_chart.chords.json")
     assert Chart.load(tmp_path / "song_chart.chords.json").arrangement_name == "Chords"
+
+
+def test_a_chord_fixed_by_the_player_is_replaced_everywhere(tmp_path):
+    from opensmith_ingest.chord_chart import chord_label, chords_of, parse_chord, rechord
+    from opensmith_ingest.cli import main
+
+    assert [parse_chord(chord_label(c)) for c in [(C, "maj"), (6, "min"), (10, "5")]] == [(C, "maj"), (6, "min"), (10, "5")]
+    assert parse_chord("C/E") is None and parse_chord("Am7") is None
+    # C for 8 beats, then G for 8, and a beat whose notes say A minor in the middle of the C.
+    notes = held([48, 52, 55, 60], 0, 4) + held([48, 52, 57], 4, 1) + held([48, 52, 55, 60], 5, 3) + held([43, 47, 50, 55, 59, 67], 8, 8)
+    chart = build_chord_chart(notes, BeatGrid.regular(120.0, 8.0), title="Song", artist="Band", duration=8.0)
+    chart.audio_backing, chart.phrases[0].name = "backing.ogg", "riff"
+    beats, chords, muted = chords_of(chart)
+    assert chords == [(C, "maj")] * 8 + [(G, "maj")] * 8 and muted == [False] * 4 + [True] + [False] * 11
+    # Read back as it was made; G replaced by E minor everywhere, the muted C named again by the player.
+    again = rechord(chart)
+    assert chords_of(again) == (beats, chords, muted)
+    fixed = rechord(chart, {(G, "maj"): (E, "min"), (C, "maj"): (C, "5")})
+    assert chords_of(fixed)[1:] == ([(C, "5")] * 8 + [(E, "min")] * 8, [False] * 16)
+    assert (fixed.audio_backing, fixed.phrases[0].name) == ("backing.ogg", "riff")
+    # The same from the command line, on the file.
+    path = tmp_path / "song_chart.chords.json"
+    chart.save(path)
+    main(["chords", str(path), "--set", "G=Em"])
+    assert chords_of(Chart.load(path))[1] == [(C, "maj")] * 8 + [(E, "min")] * 8

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aboutSource, EVERY_SONG, FIRST_TILES, fold, partLabel, partsOf, phraseMastery, preferredPart, selectSongs, SOURCES, sourceOf, tileBatches, tuningsOf } from '../src/library';
+import { aboutSource, chordLabel, EVERY_SONG, FIRST_TILES, fold, parseChord, partLabel, partsOf, phraseMastery, preferredPart, selectSongs, SOURCES, sourceOf, tileBatches, tuningsOf } from '../src/library';
 import { findSong, type SongEntry } from '../src/engine/types';
 import { emptyProgress, type Progress } from '../src/progress';
 
@@ -28,6 +28,14 @@ const PROGRESS: Progress = {
 };
 
 describe('library', () => {
+  it('names chords as the converter does, to correct them', () => {
+    expect([chordLabel(0, 'maj'), chordLabel(6, 'min'), chordLabel(10, '5')]).toEqual(['C', 'F#m', 'Bb5']);
+    expect(parseChord('F#m')).toEqual({ root: 6, quality: 'min' });
+    expect(parseChord('E5')).toEqual({ root: 4, quality: '5' });
+    expect(parseChord('C/E')).toBeNull();
+    expect(parseChord('Am7')).toBeNull();
+  });
+
   it('says the chords of an MP3 count major or minor', () => {
     const chords = song('e', 'Riff', 'Band', { source: 'audio', arrangement: 'Chords', arrangementType: 'rhythm' });
     expect(aboutSource(chords)).toContain('majeur ou mineur');

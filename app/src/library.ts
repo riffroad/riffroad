@@ -2,7 +2,7 @@ import { formatTime } from './chart';
 import { ATTACK_LEVELS, attackPicker, type AttackDifficulty } from './score-attack';
 import { coverElement } from './cover';
 import { lang, t, tn } from './i18n';
-import type { SongEntry } from './engine/types';
+import type { SongChord, SongEntry } from './engine/types';
 import type { Progress, SongProgress } from './progress';
 import { partName } from './sections';
 
@@ -121,6 +121,28 @@ export interface LibraryHooks {
   back(): void;
   /** The song whose card is open plays in the background (null: none). */
   preview?(song: SongEntry | null): void;
+  /** The chords of a song's MP3 chord chart, to correct them (the desktop app). */
+  chords?(song: SongEntry): Promise<SongChord[]>;
+  /** Replaces chords everywhere in it; resolves with how many beats changed, the library read again. */
+  fixChords?(song: SongEntry, changes: string[]): Promise<number>;
+}
+
+/** Note names as the converter names chords (`harmony.NOTE_NAMES`). */
+export const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'];
+export type ChordQuality = 'maj' | 'min' | '5';
+const SUFFIXES: Record<ChordQuality, string> = { maj: '', min: 'm', '5': '5' };
+
+/** A chord's name as an MP3's chord chart writes it: C, F#m, Bb5. */
+export function chordLabel(root: number, quality: ChordQuality): string {
+  return NOTE_NAMES[root] + SUFFIXES[quality];
+}
+
+/** The root and quality of a chord named as `chordLabel` names it; null otherwise. */
+export function parseChord(name: string): { root: number; quality: ChordQuality } | null {
+  const root = [...NOTE_NAMES.keys()].sort((a, b) => NOTE_NAMES[b].length - NOTE_NAMES[a].length).find((r) => name.startsWith(NOTE_NAMES[r]));
+  if (root === undefined) return null;
+  const quality = (Object.keys(SUFFIXES) as ChordQuality[]).find((q) => SUFFIXES[q] === name.slice(NOTE_NAMES[root].length));
+  return quality ? { root, quality } : null;
 }
 
 const ATTACK_CHOICE = 'opensmith.attackLevel';
@@ -516,6 +538,7 @@ export class Library {
     card.querySelector('.buttons')!.replaceChildren(...(this.purpose === 'riff' ? [riff, play] : [play, riff]));
     card.querySelector('.buttons')!.before(this.levelSection(song));
     if (this.hooks.scoreAttack) card.querySelector('.buttons')!.after(this.attackSection(song));
+    if (this.hooks.chords && sourceOf(song) === 'ai' && song.arrangement.toLowerCase() === 'chords') card.append(this.chordsSection(song));
     card.hidden = false;
     this.root.classList.add('with-card');
   }
@@ -571,6 +594,120 @@ export class Library {
     if (!song) return;
     setSongLevel(song.id, value === 'auto' ? null : Number(value));
     this.el.card.querySelector('.card-level')?.replaceWith(this.levelSection(song));
+  }
+
+  /** An MP3's chord chart: its chords, and one to correct everywhere, as the player hears it. */
+  private chordsSection(song: SongEntry): HTMLElement {
+    const section = document.createElement('section');
+    section.className = 'card-chords';
+    section.hidden = true;
+    const head = document.createElement('h4');
+    head.textContent = t('Accords du morceau');
+    const hint = document.createElement('p');
+    hint.className = 'card-chords-hint';
+    hint.textContent = t('Un accord faux ? Choisis-le, puis celui qu’on entend : il change partout.');
+    const chips = document.createElement('div');
+    chips.className = 'chord-chips';
+    const fix = document.createElement('div');
+    fix.className = 'chord-fix';
+    fix.hidden = true;
+    section.append(head, hint, chips, fix);
+    this.hooks
+      .chords?.(song)
+      .then((chords) => {
+        chips.replaceChildren(
+          ...chords.map((c) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'chip';
+            chip.textContent = `${c.name} · ${c.beats}`;
+            chip.title = c.muted ? t('{n} temps, dont {m} étouffés : accord incertain', { n: c.beats, m: c.muted }) : tn(c.beats, '{n} temps', '{n} temps');
+            chip.addEventListener('click', () => this.chordFix(song, c.name, fix, chip));
+            return chip;
+          }),
+        );
+        section.hidden = chords.length === 0;
+      })
+      .catch(() => (section.hidden = true));
+    return section;
+  }
+
+  /** Corrects chord `old` of the song everywhere: the chord heard instead, then the converter. */
+  private chordFix(song: SongEntry, old: string, box: HTMLElement, chip: HTMLElement): void {
+    chip.parentElement?.querySelectorAll('.chip.on').forEach((c) => c.classList.remove('on'));
+    chip.classList.add('on');
+    const choice = parseChord(old) ?? { root: 0, quality: 'maj' as ChordQuality };
+    const roots = document.createElement('select');
+    roots.setAttribute('aria-label', t('Fondamentale'));
+    roots.replaceChildren(...NOTE_NAMES.map((n, r) => new Option(n, String(r), false, r === choice.root)));
+    const qualities = document.createElement('div');
+    qualities.className = 'segmented';
+    const kinds: [ChordQuality, string][] = [
+      ['maj', t('Majeur')],
+      ['min', t('Mineur')],
+      ['5', 'Power chord'],
+    ];
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'action small primary';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'action small';
+    cancel.textContent = t('Annuler');
+    const label = () => chordLabel(choice.root, choice.quality);
+    const draw = () => {
+      qualities.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === choice.quality));
+      go.textContent = t('{old} devient {new} partout', { old, new: label() });
+      go.disabled = label() === old;
+    };
+    for (const [value, name] of kinds) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.value = value;
+      b.textContent = name;
+      b.addEventListener('click', () => {
+        choice.quality = value;
+        draw();
+      });
+      qualities.append(b);
+    }
+    roots.addEventListener('change', () => {
+      choice.root = Number(roots.value);
+      draw();
+    });
+    cancel.addEventListener('click', () => {
+      box.hidden = true;
+      chip.classList.remove('on');
+    });
+    go.addEventListener('click', () => {
+      const now = label();
+      go.disabled = cancel.disabled = true;
+      go.textContent = t('Je refais la partition…');
+      this.hooks
+        .fixChords?.(song, [`${old}=${now}`])
+        .then((n) => {
+          this.status(tn(n, '{n} temps : {old} devient {new}.', '{n} temps : {old} devient {new}.', { old, new: now }));
+          // The card again, on the chart made anew.
+          const main = this.songs.find((s) => partsOf(s).some((p) => p.id === song.id));
+          const fresh = main && partsOf(main).find((p) => p.id === song.id);
+          const tile = main && this.tileOf(main);
+          if (main && fresh && tile) this.openCard(main, tile, fresh);
+        })
+        .catch((e: unknown) => {
+          this.status(String(e), true);
+          cancel.disabled = false;
+          draw();
+        });
+    });
+    const row = document.createElement('div');
+    row.className = 'chord-fix-row';
+    row.append(roots, qualities);
+    const buttons = document.createElement('div');
+    buttons.className = 'chord-fix-row';
+    buttons.append(go, cancel);
+    box.replaceChildren(row, buttons);
+    box.hidden = false;
+    draw();
   }
 
   /** Score Attack in the card: the difficulties with their records, and the button. */

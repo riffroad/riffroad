@@ -343,6 +343,50 @@ fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
     Ok(root.join(rel))
 }
 
+/// A chord of an MP3's chord chart: how many beats strum it, how many of those muted (the
+/// recognition was unsure). In order of first appearance.
+#[derive(Serialize)]
+struct SongChord {
+    name: String,
+    beats: u32,
+    muted: u32,
+}
+
+/// The chords the player may correct: those of a chord chart made from an MP3 (none otherwise).
+#[tauri::command]
+async fn song_chords(app: State<'_, App>, id: String) -> Result<Vec<SongChord>, String> {
+    let path = resolve(&app.library, &id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let chart = opensmith_game::Chart::load(&path).map_err(|e| e.to_string())?;
+        let mut out: Vec<SongChord> = Vec::new();
+        if !chart.transcribed() || !chart.arrangement.name.eq_ignore_ascii_case("chords") {
+            return Ok(out);
+        }
+        for c in chart.chords.iter().filter(|c| c.levels[1] == chart.arrangement.max_difficulty) {
+            let name = &chart.chord_templates[c.template].name;
+            let muted = c.techniques.as_ref().and_then(|t| t.mute) == Some(true);
+            match out.iter_mut().find(|s| &s.name == name) {
+                Some(s) => {
+                    s.beats += 1;
+                    s.muted += muted as u32;
+                }
+                None => out.push(SongChord { name: name.clone(), beats: 1, muted: muted as u32 }),
+            }
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Replaces chords everywhere in an MP3's chord chart (`changes`: "G=Em"…); how many beats changed.
+#[tauri::command]
+async fn fix_chords(app: State<'_, App>, importer: State<'_, Importer>, id: String, changes: Vec<String>) -> Result<u32, String> {
+    let path = resolve(&app.library, &id)?;
+    let importer = importer.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || importer.fix_chords(&path, &changes)).await.map_err(|e| e.to_string())?
+}
+
 /// Read off the main thread: imports land while a song is played.
 #[tauri::command]
 async fn cloud_status(cloud: State<'_, cloud::Cloud>) -> Result<cloud::Status, String> {
@@ -1184,6 +1228,8 @@ pub fn run() {
             poll,
             audio_status,
             perf_log,
+            song_chords,
+            fix_chords,
             import_paths,
             imports,
             import_folder,

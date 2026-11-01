@@ -16,9 +16,12 @@ import numpy as np
 from .builder import MAX_DIFFICULTY, BeatGrid, build_chart
 from .chart import Chart
 from .fingering import Fingered, Note, Tuning
+from .harmony import NOTE_NAMES
 from .transcription import RawNote
 
 QUALITIES = ("maj", "min", "5")
+# A chord's name (`harmony.chord_name`) ends with its quality's suffix.
+SUFFIXES = {"maj": "", "min": "m", "5": "5"}
 INTERVALS = {"maj": (0, 4, 7), "min": (0, 3, 7), "5": (0, 7)}
 # Price of a chord change against the per-beat match (a cosine, 0 to 1): a passing note does not
 # change the chord, a new chord held for a beat or two does.
@@ -259,3 +262,64 @@ def build_chord_chart(
         tab=tab,
         phrase_features=phrase_features,
     )
+
+
+def chord_label(chord: tuple[int, str]) -> str:
+    """The name of a chord (root pitch class, quality) as the chart's shapes are named: C, F#m, E5."""
+    return NOTE_NAMES[chord[0]] + SUFFIXES[chord[1]]
+
+
+def parse_chord(name: str) -> tuple[int, str] | None:
+    """(root pitch class, quality) of a chord named as `chord_label` names it; None otherwise."""
+    for root in sorted(range(12), key=lambda r: -len(NOTE_NAMES[r])):
+        if name.startswith(NOTE_NAMES[root]):
+            quality = {v: k for k, v in SUFFIXES.items()}.get(name[len(NOTE_NAMES[root]) :])
+            return (root, quality) if quality else None
+    return None
+
+
+def chords_of(chart: Chart) -> tuple[list[float], list[tuple[int, str] | None], list[bool]]:
+    """What a chord chart strums: its beats, the chord of each beat (None: a rest) and whether it
+    is muted, read from its whole chords (the highest level)."""
+    beats = [b.time for b in chart.beats]
+    whole = {round(c.time, 3): c for c in chart.chords if c.levels[1] == chart.max_difficulty}
+    chords: list[tuple[int, str] | None] = []
+    muted: list[bool] = []
+    for t in beats[:-1]:
+        c = whole.get(round(t, 3))
+        chord = parse_chord(chart.templates[c.template].name) if c else None
+        if c and chord is None:
+            raise ValueError(f"not a chord chart: {chart.templates[c.template].name} at {t:.2f} s")
+        chords.append(chord)
+        muted.append(bool(c and c.techniques.get("mute")))
+    return beats, chords, muted
+
+
+def rechord(chart: Chart, changes: dict[tuple[int, str], tuple[int, str]] | None = None) -> Chart:
+    """A chord chart made again from its own chords, each chord in `changes` replaced by the one
+    it gives everywhere (the player knows better: it is no longer muted), with today's levels.
+    The recording, the song's details and its phrases' names stay."""
+    changes = changes or {}
+    beats, chords, muted = chords_of(chart)
+    fixed = [changes.get(c, c) if c else None for c in chords]
+    muted = [m and (c not in changes) for c, m in zip(chords, muted)]
+    grid = BeatGrid.from_downbeats(beats, [b.time for b in chart.beats if b.bar is not None], chart.time_signature[0])
+    new = build_chart(
+        None,
+        grid,
+        title=chart.title,
+        artist=chart.artist,
+        duration=chart.duration,
+        tuning=chart.tuning,
+        source_kind=chart.source_kind,
+        source_file=chart.source_file,
+        arrangement_name=chart.arrangement_name,
+        tab=strums(fixed, beats, chart.tuning, muted),
+    )
+    new.album, new.year = chart.album, chart.year
+    new.audio_backing, new.audio_guitar, new.audio_mix, new.audio_offset = chart.audio_backing, chart.audio_guitar, chart.audio_mix, chart.audio_offset
+    if [(p.start, p.end) for p in new.phrases] == [(p.start, p.end) for p in chart.phrases]:
+        for p, old in zip(new.phrases, chart.phrases):
+            p.name = old.name
+        new.sections = chart.sections
+    return new

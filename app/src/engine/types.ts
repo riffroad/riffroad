@@ -35,6 +35,13 @@ export interface SongEntry {
   others?: SongEntry[];
 }
 
+/** A chord of an MP3's chord chart: how many beats strum it, how many of those muted (unsure). */
+export interface SongChord {
+  name: string;
+  beats: number;
+  muted: number;
+}
+
 /** A song entry by id, its other arrangements included. */
 export function findSong(songs: readonly SongEntry[], id: string): SongEntry | undefined {
   for (const s of songs) {

@@ -101,6 +101,11 @@ def _parser() -> argparse.ArgumentParser:
     again.add_argument("--no-consensus", action="store_true", help="keep each repeat of a phrase as transcribed")
     again.add_argument("--retune", action="store_true", help="detect the tuning again instead of keeping it")
 
+    chords = sub.add_parser("chords", help="make a chord chart again from its own chords, some replaced everywhere (today's levels)")
+    chords.add_argument("chart", type=Path, help="an MP3's chord chart (song_chart.chords.json)")
+    chords.add_argument("--set", dest="changes", action="append", default=[], metavar="OLD=NEW", help="replace a chord everywhere: G=Em, F#m=F#5")
+    chords.add_argument("-o", "--out", type=Path, help="where to write it (default: in place)")
+
     tab = sub.add_parser("tab", help="print a chart as tablature")
     tab.add_argument("chart", type=Path)
     tab.add_argument("--level", type=int)
@@ -257,6 +262,21 @@ def _run(args: argparse.Namespace, emit: Emit | None) -> None:
             chart = rechart(folder, consensus=not args.no_consensus, report=report, retune=args.retune)
             details = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in report.items())
             print(f"{chart.artist} — {chart.title}: {len(chart.notes)} notes, {len(chart.chords)} chords, {len(chart.anchors)} hand positions ({details})")
+    elif args.cmd == "chords":
+        from .chart import Chart
+        from .chord_chart import chords_of, parse_chord, rechord
+
+        changes = {}
+        for change in args.changes:
+            old, _, new = change.partition("=")
+            a, b = parse_chord(old.strip()), parse_chord(new.strip())
+            if a is None or b is None:
+                sys.exit(f"--set {change}: chords are named C, F#m, Bb5…")
+            changes[a] = b
+        chart = Chart.load(args.chart)
+        _, before, _ = chords_of(chart)
+        rechord(chart, changes).save(args.out or args.chart)
+        print(json.dumps({"changed": sum(1 for c in before if c in changes)}))
     elif args.cmd == "tab":
         from .chart import Chart
         from .preview import render
