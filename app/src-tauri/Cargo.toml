@@ -26,6 +26,10 @@ opensmith-audio = { path = "../../engine-rt/audio" }
 opensmith-dsp = { path = "../../engine-rt/dsp" }
 opensmith-game = { path = "../../engine-rt/game" }
 opensmith-session = { path = "../../engine-rt/session" }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls"] }
+tokio = { version = "1.54.1", features = ["sync"] }
+opensmith-cloud = { version = "0.1.0", path = "../../cloud/api" }
+keyring = "4.2.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -39,3 +43,8 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[dev-dependencies]
+axum = "0.8.9"
+opensmith-cloud-server = { path = "../../cloud/server" }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net"] }

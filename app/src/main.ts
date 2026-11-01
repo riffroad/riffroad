@@ -84,6 +84,8 @@ import { levelOf } from './career/difficulty';
 import { rehearse, REHEARSAL, starter } from './career/repertoire';
 import { Crowd } from './career/crowd';
 import { CareerScreen } from './career/screen';
+import { AccountPanel, askWhichSave, tauriCloud } from './account';
+import { CloudSync, storagePart } from './cloud';
 import { lang, LANGS, localize, setLang, t, tn, type Lang } from './i18n';
 
 // The page's own text (index.html, written in French) in the interface language, before anything reads it.
@@ -229,6 +231,61 @@ let audio: AudioStatus | null = null;
 /** Game events that arrived before their song's view existed (while loading). */
 let backlog: GameEvent[] = [];
 const form = $<HTMLFormElement>('settings');
+
+// The saves kept online (desktop app, signed in): up when they change, down from the menu.
+const cloud =
+  engine instanceof TauriEngine
+    ? new CloudSync(
+        tauriCloud,
+        localStorage,
+        {
+          career: { 'opensmith.career': storagePart(localStorage, 'opensmith.career') },
+          progress: {
+            'opensmith.progress': { read: () => engine.progress.load(), write: (v) => engine.progress.save(v as Progress) },
+            'opensmith.lessons': storagePart(localStorage, 'opensmith.lessons'),
+          },
+        },
+        askWhichSave,
+      )
+    : null;
+let cloudSignedIn = false;
+let cloudPulledAt = 0;
+let cloudBusy: Promise<unknown> = Promise.resolve();
+
+/** One sync at a time. What comes down (from the menu or the settings only) reloads the page
+ * right away, before anything in memory can save over it. */
+function cloudSync(pull: boolean): Promise<string> {
+  const run = cloudBusy.then(async () => {
+    if (!cloud) return '';
+    const status = await tauriCloud.status();
+    $('accountTab').hidden = !status.available;
+    cloudSignedIn = !!status.email;
+    if (!status.email) return '';
+    const down = pull && (mode === 'menu' || mode === 'settings');
+    const r = await cloud.sync(down);
+    if (down) cloudPulledAt = Date.now();
+    if (r.pulled.length) {
+      location.reload();
+      return t('Sauvegardes récupérées.');
+    }
+    if (r.conflict) return t('Une sauvegarde a aussi changé sur un autre Mac : retourne au menu pour choisir laquelle garder.');
+    return r.pushed.length ? t('Sauvegardes envoyées.') : t('Tout est à jour.');
+  });
+  cloudBusy = run.catch(() => undefined);
+  return run;
+}
+
+const cloudQuietly = (pull: boolean) => void cloudSync(pull).catch((e) => console.warn('compte', e));
+setInterval(() => cloudSignedIn && cloudQuietly(false), 60_000);
+document.addEventListener('visibilitychange', () => document.hidden && cloudSignedIn && cloudQuietly(false));
+
+const accountPanel = new AccountPanel($('accountSettings'), {
+  sync: () => cloudSync(true),
+  signedOut: () => {
+    cloud?.forget();
+    cloudSignedIn = false;
+  },
+});
 (form.elements.namedItem('scenery') as HTMLSelectElement).replaceChildren(...SCENERIES.map((s) => new Option(s.label, s.id)));
 (form.elements.namedItem('guitarTuning') as HTMLSelectElement).replaceChildren(
   new Option(t('Le dernier où je l’ai accordée (morceaux décalés vers lui)'), LAST_TUNING),
@@ -927,15 +984,16 @@ function openSettings(tab?: SettingsTab): void {
   showSettingsTab(tab ?? (engine instanceof TauriEngine ? 'audio' : 'game'));
 }
 
-type SettingsTab = 'audio' | 'latency' | 'game';
+type SettingsTab = 'audio' | 'latency' | 'game' | 'account';
 
 function showSettingsTab(tab: SettingsTab): void {
-  if (tab === 'game') guitarSettings.close();
-  else {
+  if (tab === 'audio' || tab === 'latency') {
     guitarSettings.open(audio, engine instanceof TauriEngine);
     guitarSettings.tab(tab);
-  }
+  } else guitarSettings.close();
   form.hidden = tab !== 'game';
+  $('accountSettings').hidden = tab !== 'account';
+  if (tab === 'account') void accountPanel.open();
   document.querySelectorAll<HTMLElement>('#settingsTabs .tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === tab));
 }
 
@@ -1105,6 +1163,8 @@ function showMenu(): void {
   }
   setMode('menu');
   updateMenu();
+  // Another Mac may have played meanwhile.
+  if (cloudSignedIn && Date.now() - cloudPulledAt > 120_000) cloudQuietly(true);
 }
 
 function openImports(): void {
@@ -2068,7 +2128,7 @@ form.addEventListener('input', (e) => {
 document.addEventListener('click', (e) => {
   const action = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;
   const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]')?.dataset.tab;
-  if (tab === 'audio' || tab === 'latency' || tab === 'game') showSettingsTab(tab);
+  if (tab === 'audio' || tab === 'latency' || tab === 'game' || tab === 'account') showSettingsTab(tab);
   if (action === 'resume') togglePause();
   else if (action === 'restart') restart();
   else if (action === 'library') {
@@ -2336,6 +2396,7 @@ if (engine instanceof TauriEngine) {
 }
 void showAudioStatus();
 requestAnimationFrame(frame);
+void progressLoaded.then(() => cloudQuietly(true));
 void progressLoaded.then(loadLibrary).then(() => {
   const song = new URLSearchParams(location.search).get('song');
   if (song) void start(song);

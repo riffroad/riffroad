@@ -3,6 +3,7 @@
 //! The session runs on its own thread with the CoreAudio engine; the web view polls it every
 //! frame for the song time and the game events, and renders the note highway.
 
+mod cloud;
 mod import;
 
 use std::collections::HashMap;
@@ -339,6 +340,42 @@ fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
 }
 
 /// Read off the main thread: imports land while a song is played.
+#[tauri::command]
+async fn cloud_status(cloud: State<'_, cloud::Cloud>) -> Result<cloud::Status, String> {
+    Ok(cloud.status().await)
+}
+
+#[tauri::command]
+async fn cloud_sign_in(cloud: State<'_, cloud::Cloud>, email: String, password: String, create: bool) -> Result<cloud::Status, String> {
+    cloud.sign_in(&email, &password, create).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_sign_out(cloud: State<'_, cloud::Cloud>) -> Result<(), String> {
+    cloud.sign_out().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn cloud_reset_password(cloud: State<'_, cloud::Cloud>, email: String) -> Result<(), String> {
+    cloud.reset_password(&email).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_pull(cloud: State<'_, cloud::Cloud>, slot: String) -> Result<Option<opensmith_cloud::Save>, String> {
+    cloud.pull(&slot).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_push(cloud: State<'_, cloud::Cloud>, slot: String, data: serde_json::Value, base_version: u64) -> Result<cloud::Pushed, String> {
+    cloud.push(&slot, data, base_version).await.map_err(|e| e.code())
+}
+
+#[tauri::command]
+async fn cloud_delete_account(cloud: State<'_, cloud::Cloud>) -> Result<(), String> {
+    cloud.delete_account().await.map_err(|e| e.code())
+}
+
 #[tauri::command]
 async fn library(app: State<'_, App>) -> Result<Vec<SongEntry>, String> {
     let (root, charts) = (app.library.clone(), app.charts.clone());
@@ -957,6 +994,7 @@ pub fn run() {
     let _ = fs::create_dir_all(&root);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(cloud::Cloud::new(cloud::Config::from_env(), Box::new(cloud::Keychain)))
         .setup(move |app| {
             // The page shows the window once drawn; should it fail, the window appears anyway.
             if let Some(window) = app.get_webview_window("main") {
@@ -985,6 +1023,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cloud_status,
+            cloud_sign_in,
+            cloud_sign_out,
+            cloud_reset_password,
+            cloud_pull,
+            cloud_push,
+            cloud_delete_account,
             library,
             load_song,
             load_lesson,

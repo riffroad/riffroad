@@ -1,0 +1,12 @@
+# OpenSmith's online side: the formats the app and the server share (api), and the server
+# that keeps each player's saves (server). A workspace of its own: the server builds on Linux,
+# away from the macOS audio engine.
+[workspace]
+resolver = "3"
+members = ["api", "server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"

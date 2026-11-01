@@ -19,3 +19,7 @@ dist/
 # Tauri (app/src-tauri is its own Cargo workspace)
 app/src-tauri/target/
 app/src-tauri/gen/
+
+# Online saves (cloud is its own Cargo workspace; logs of the Firebase emulators)
+cloud/target/
+cloud/*-debug.log
