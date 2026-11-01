@@ -1,6 +1,6 @@
 /**
  * The game's sounds, made here rather than recorded, in a garage band's colours: the interface
- * as a guitar through a cranked amp (pick scratches, palm-muted chugs, a footswitch), the cues
+ * as the guitar's wood (the pick tapping the pickguard, the body answering), the cues
  * in play (the drummer's sticks counting in, pick slides, power chords, feedback) and the crowd
  * of a small club (its murmur, cheers, whistles, applause, clapping in time), with the room
  * around them. Each is mono samples at its own rate, the same on every run (seeded noise), so
@@ -224,6 +224,27 @@ function pluck(x: Float32Array, rate: number, at: number, freq: number, ring: nu
   }
 }
 
+/** The pick tapping the guitar's wood: a burst of noise through the body's resonance at `freq`,
+ * with the pick's own snap above it; no note. */
+function knock(x: Float32Array, rate: number, at: number, freq: number, gain: number, rand: () => number): void {
+  const body = bandpass(rate, freq, 4);
+  const snap = bandpass(rate, freq * 3.1, 2);
+  const start = Math.round(at * rate);
+  for (let i = start; i < x.length; i++) {
+    const t = (i - start) / rate;
+    if (t > 0.08) break;
+    const n = rand() * env(t, 0.0002, 0.002);
+    x[i] += gain * (body(n) * 3 + 0.5 * snap(n));
+  }
+}
+
+/** The last `seconds` of `x` faded to silence (a cut sound would click). */
+function fadeOut(x: Float32Array, rate: number, seconds: number): Float32Array {
+  const n = Math.min(x.length, Math.round(seconds * rate));
+  for (let k = 0; k < n; k++) x[x.length - 1 - k] *= 0.5 - 0.5 * Math.cos((Math.PI * k) / n);
+  return x;
+}
+
 /** A power chord (root, fifth, octave) strummed down from `at`. */
 function powerChord(x: Float32Array, rate: number, at: number, root: number, ring: number, gain: number, rand: () => number): void {
   [1, 1.4983, 2].forEach((m, k) => pluck(x, rate, at + 0.007 * k, root * m, ring, gain, rand));
@@ -323,44 +344,36 @@ function room(x: Float32Array, rate: number, wet: number, tail = 0.6): Float32Ar
 export function synthesize(name: SoundName, rate: number): Float32Array {
   switch (name) {
     case 'hover': {
-      // The pick brushing the muted strings.
-      const x = buffer(rate, 0.035);
-      const rand = noise(3);
-      const bp = bandpass(rate, 3000, 1.5);
-      for (let i = 0; i < x.length; i++) x[i] = bp(rand()) * env(i / rate, 0.0005, 0.006);
-      return normalize(amp(x, rate, 3, 5000), 0.1);
+      // The pick brushing the pickguard: barely there.
+      const x = buffer(rate, 0.06);
+      knock(x, rate, 0, 2400, 0.25, noise(51));
+      return normalize(fadeOut(x, rate, 0.01), 0.05);
     }
     case 'click': {
-      // A palm-muted chug on the low E.
-      const x = buffer(rate, 0.12);
-      pluck(x, rate, 0, 82.41, 0.07, 1, noise(7));
-      return normalize(amp(x, rate, 6), 0.38);
+      // The pick tapping the guitar's top, the body answering.
+      const x = buffer(rate, 0.09);
+      knock(x, rate, 0, 1100, 1, noise(51));
+      return normalize(fadeOut(room(x, rate, 0.08, 0.15), rate, 0.01), 0.2);
     }
     case 'back': {
-      // The same, a tone lower and darker.
-      const x = buffer(rate, 0.13);
-      pluck(x, rate, 0, 73.42, 0.06, 1, noise(9));
-      return normalize(amp(x, rate, 5, 2400), 0.32);
+      // Lower on the body, deeper.
+      const x = buffer(rate, 0.09);
+      knock(x, rate, 0, 700, 1, noise(51));
+      return normalize(fadeOut(room(x, rate, 0.08, 0.15), rate, 0.01), 0.18);
     }
     case 'tick': {
-      // A stompbox's footswitch.
-      const x = buffer(rate, 0.03);
-      const rand = noise(11);
-      const snap = bandpass(rate, 2400, 3);
-      const body = bandpass(rate, 900, 2);
-      for (let i = 0; i < x.length; i++) {
-        const n = rand() * env(i / rate, 0.0002, 0.0015);
-        x[i] = snap(n) + 0.6 * body(n);
-      }
-      return normalize(x, 0.16);
+      // A fingernail on the pickguard.
+      const x = buffer(rate, 0.06);
+      knock(x, rate, 0, 1800, 0.6, noise(51));
+      return normalize(fadeOut(x, rate, 0.01), 0.09);
     }
     case 'error': {
-      // A clam: E and F together, muted, through too much gain.
-      const x = buffer(rate, 0.2);
-      const rand = noise(13);
-      pluck(x, rate, 0, 82.41, 0.12, 1, rand);
-      pluck(x, rate, 0.004, 87.31, 0.12, 1, rand);
-      return normalize(amp(x, rate, 10, 3000), 0.32);
+      // Two dull knocks: no.
+      const x = buffer(rate, 0.18);
+      const rand = noise(51);
+      knock(x, rate, 0, 500, 1, rand);
+      knock(x, rate, 0.07, 480, 0.9, rand);
+      return normalize(fadeOut(x, rate, 0.01), 0.22);
     }
     case 'count':
     case 'countAccent': {
