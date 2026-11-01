@@ -131,6 +131,11 @@ def _parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("demo", help="the generated demo song shipped with the app (backing track + chart)")
     demo.add_argument("-o", "--out", type=Path, required=True)
 
+    ship = sub.add_parser("bundle", help="an imported song made light to ship with the app (Ogg stems + its charts)")
+    ship.add_argument("song", type=Path, help="the song's imported folder")
+    ship.add_argument("-o", "--out", type=Path, required=True)
+    ship.add_argument("--album", help="replaces the charts' album (a shipped song's credit)")
+
     sub.add_parser("formats", help="the file extensions installed plugins import, as JSON {extension: command}")
     formats: dict[str, str] = {}
     for entry in entry_points(group=PLUGINS):
@@ -265,6 +270,11 @@ def _run(args: argparse.Namespace, emit: Emit | None) -> None:
 
         chart = make_demo(args.out)
         print(f"{chart.artist} — {chart.title}: {len(chart.notes)} notes, {len(chart.chords)} chords → {args.out}")
+    elif args.cmd == "bundle":
+        from .bundle import bundle
+
+        files = bundle(args.song, args.out, album=args.album)
+        print(f"{len(files)} files, {sum(f.stat().st_size for f in files) / 1e6:.1f} MB → {args.out}")
     elif args.cmd == "bench":
         from .bench import Run, SongResult, measure, references, summary
 

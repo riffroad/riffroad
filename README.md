@@ -54,7 +54,9 @@ The app lands in `app/src-tauri/target/release/bundle/`. See
 
 1. Open OpenSmith. A short guide has you plug in the guitar, set the input level, calibrate the
    latency (strum on 12 clicks) and tune.
-2. **Songs → First Riff**: the demo song. Space pauses, `?` lists every shortcut.
+2. **Songs**: five songs to start with: First Riff, made for a first try, and four rock songs
+   by Shane Ivers (CC BY 4.0), the band playing around your guitar. Space pauses, `?` lists
+   every shortcut.
 3. Import your own music: drop MP3s, a Guitar Pro tab, a feedpak or a whole folder on the
    window. Each song takes about half a minute on an M-series Mac (the first import also
    installs the converter, a few minutes).

@@ -17,6 +17,7 @@ cpal = "0.18"
 rtrb = "0.4"
 realfft = "3.5"
 hound = "3.5"
+lewton = "0.10"
 clap = { version = "4.6", features = ["derive"] }
 anyhow = "1"
 thiserror = "2"

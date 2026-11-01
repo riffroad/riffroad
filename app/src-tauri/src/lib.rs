@@ -954,28 +954,43 @@ fn library_dir() -> PathBuf {
     dirs::audio_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join("Music")).join("OpenSmith")
 }
 
-/// Written in the library once the demo song was put in it: a player who deletes it does not
-/// get it back at the next launch.
+/// Written in the library: the demo songs already put in it, one name a line, so that a player
+/// who deletes one does not get it back, and a demo shipped later still arrives. (Empty: written
+/// when the first demo was the only one.)
 const DEMO_PLACED: &str = ".demo";
+const FIRST_DEMO: &str = "OpenSmith - First Riff";
 
-/// Puts the demo songs the app carries (`resources/demo`, one folder each) in the library, the
-/// first time only.
+/// Puts the demo songs the app carries (`resources/demo`, one folder each) in the library, each
+/// once.
 fn place_demo(resources: &Path, library: &Path) {
     let marker = library.join(DEMO_PLACED);
-    if marker.exists() {
-        return;
-    }
-    for song in fs::read_dir(resources.join("demo")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
-        let Some(name) = song.file_name() else { continue };
-        let dest = library.join(name);
-        if dest.exists() || fs::create_dir_all(&dest).is_err() {
+    let mut placed: Vec<String> = match fs::read_to_string(&marker) {
+        Ok(text) if text.trim().is_empty() => vec![FIRST_DEMO.into()],
+        Ok(text) => text.lines().map(str::to_string).collect(),
+        Err(_) => Vec::new(),
+    };
+    let before = placed.len();
+    let mut songs: Vec<PathBuf> = fs::read_dir(resources.join("demo")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    songs.sort();
+    for song in songs {
+        let Some(name) = song.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
+        if placed.contains(&name) {
             continue;
         }
-        for file in fs::read_dir(&song).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file()) {
-            let _ = fs::copy(&file, dest.join(file.file_name().unwrap_or_default()));
+        let dest = library.join(&name);
+        if !dest.exists() {
+            if fs::create_dir_all(&dest).is_err() {
+                continue;
+            }
+            for file in fs::read_dir(&song).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file()) {
+                let _ = fs::copy(&file, dest.join(file.file_name().unwrap_or_default()));
+            }
         }
+        placed.push(name);
     }
-    let _ = fs::write(marker, "");
+    if placed.len() != before || !marker.exists() {
+        let _ = fs::write(marker, placed.join("\n"));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1193,6 +1208,23 @@ mod tests {
         fs::remove_dir_all(library.join("Band - Demo")).unwrap();
         place_demo(&resources, &library);
         assert!(!library.join("Band - Demo").exists());
+    }
+
+    #[test]
+    fn a_demo_shipped_later_reaches_a_library_that_had_the_first_one() {
+        let root = scratch("demo-later");
+        let (resources, library) = (root.join("resources"), root.join("library"));
+        for name in [FIRST_DEMO, "Band - Rock"] {
+            fs::create_dir_all(resources.join("demo").join(name)).unwrap();
+            fs::write(resources.join("demo").join(name).join("backing.ogg"), b"OggS").unwrap();
+        }
+        // A library from the days of the one demo: its marker empty, the first demo deleted.
+        fs::create_dir_all(&library).unwrap();
+        fs::write(library.join(DEMO_PLACED), "").unwrap();
+        place_demo(&resources, &library);
+        assert!(library.join("Band - Rock/backing.ogg").is_file());
+        assert!(!library.join(FIRST_DEMO).exists());
+        assert_eq!(fs::read_to_string(library.join(DEMO_PLACED)).unwrap(), format!("{FIRST_DEMO}\nBand - Rock"));
     }
 
     #[test]

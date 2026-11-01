@@ -58,8 +58,9 @@ L'app arrive dans `app/src-tauri/target/release/bundle/`. Voir
 
 1. Ouvre OpenSmith. Un court guide te fait brancher la guitare, régler le niveau d'entrée,
    calibrer la latence (gratter sur 12 clics) et t'accorder.
-2. **Morceaux → First Riff** : le morceau de démo. Espace met en pause, `?` liste tous les
-   raccourcis.
+2. **Morceaux** : cinq morceaux pour commencer : First Riff, fait pour un premier essai, et
+   quatre morceaux rock de Shane Ivers (CC BY 4.0), le groupe qui joue autour de ta guitare.
+   Espace met en pause, `?` liste tous les raccourcis.
 3. Importe ta propre musique : glisse des MP3, une tablature Guitar Pro, un feedpak ou tout un
    dossier sur la fenêtre. Compte une demi-minute par morceau sur un Mac M (le premier import
    installe aussi le convertisseur, quelques minutes).
