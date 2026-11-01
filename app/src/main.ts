@@ -24,7 +24,7 @@ import { Highway } from './highway/highway';
 import { isScenery, SCENERIES, type SceneryId } from './highway/scenery';
 import { Hud } from './hud';
 import { Imports } from './imports';
-import { arrangementLabel, Library, partLabel, partsOf, type LibraryPurpose } from './library';
+import { arrangementLabel, Library, partLabel, partsOf, setSongLevel, songLevel, type LibraryPurpose } from './library';
 import { gradeFor, record, recordAttack, recordPass, type Progress } from './progress';
 import { AttackHud, attackLevel, AttackRun, attackStartLevel, attackSummary, STRIKES, type AttackDifficulty } from './score-attack';
 import { accelerated, countNotes, percent, riffLoop, RiffPanel, roundSpeed, type PhraseState, type RiffChoice } from './riff';
@@ -228,6 +228,8 @@ let attack: AttackRun | null = null;
 let attackNext: AttackDifficulty | null = null;
 /** Difficulty forced from the pause menu for this song (a step of `startLevelFor`); null: dynamic. */
 let forcedStep: number | null = null;
+/** The level chosen on the song card for the song about to start (null: dynamic). */
+let levelNext: number | null = null;
 /** The difficulty was forced during this play: the levels learnt are left as they were. */
 let levelsForced = false;
 /** The weekly challenge being played (a Score Attack of the career). */
@@ -665,6 +667,11 @@ function renderQuick(): void {
 function setDifficulty(value: string): void {
   if (!chart || attack) return;
   forcedStep = value === 'auto' ? null : Number(value);
+  // A song played from the library keeps it for next time (its card shows it).
+  if (currentId && !gig && lessonRun === null && drillRun === null) {
+    setSongLevel(currentId, forcedStep);
+    library.refreshLevel();
+  }
   if (forcedStep !== null) levelsForced = true;
   const level = startLevelFor(forcedStep ?? settings.startLevel, chart.arrangement.maxDifficulty, current?.levelNotes);
   engine.setDifficulty(forcedStep === null, level);
@@ -1200,10 +1207,12 @@ const library = new Library($('library'), {
   coverUrl: (song) => engine.coverUrl(song),
   play: (id) => {
     engine.unlock();
+    levelNext = songLevel(id);
     void start(id);
   },
   riff: (id) => {
     engine.unlock();
+    levelNext = songLevel(id);
     void start(id, true);
   },
   scoreAttack: (id, difficulty) => {
@@ -1332,9 +1341,11 @@ async function start(id: string, riffOpening = false): Promise<void> {
   showRiff();
   attack = attackNext ? new AttackRun(attackLevel(attackNext)) : null;
   attackNext = null;
-  // Every song starts with dynamic difficulty; the pause menu can force a level.
-  forcedStep = null;
-  levelsForced = false;
+  // A song starts at the difficulty chosen on its card (dynamic unless a level was picked there or
+  // in the pause menu); Score Attack has its own levels.
+  forcedStep = attack ? null : levelNext;
+  levelNext = null;
+  levelsForced = forcedStep !== null;
   // Practising after the run (or anything else) is no longer the challenge.
   if (!attack || challengeRun?.song !== id) challengeRun = null;
   if (!attack || worldRun?.song !== id || worldRun.level !== attack.level.key) worldRun = null;

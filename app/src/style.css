@@ -5035,3 +5035,17 @@ body.with-account-chip .hw-hud {
 .account .or {
   margin: 8px 0 4px;
 }
+
+/* The song card's difficulty (library.ts): Auto or a level for the whole song. */
+.card-level {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.card-level-head {
+  color: var(--muted);
+  font-size: 13px;
+}
+.card-level-head b {
+  color: var(--fg);
+}

@@ -65,6 +65,7 @@ export const MAIN: Record<string, string> = {
   'La guitare de l’enregistrement, gardée à part à l’import : pour l’entendre jouer la partie.': 'The recording’s own guitar, kept apart on import: to hear how the part goes.',
   'Ampli': 'Amp',
   'Difficulté': 'Difficulty',
+  'Auto': 'Auto',
   'Auto · suit ton jeu': 'Auto · follows your playing',
   '1 · Débutant': '1 · Beginner',
   '2 · Facile': '2 · Easy',

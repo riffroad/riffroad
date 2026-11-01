@@ -222,6 +222,9 @@ export class Library {
         case 'part':
           if (id) this.choosePart(id);
           break;
+        case 'level':
+          this.chooseLevel(target.dataset.value ?? 'auto');
+          break;
         case 'attack-level':
           this.chooseAttack(target.dataset.value as AttackDifficulty);
           break;
@@ -478,6 +481,7 @@ export class Library {
     riff.dataset.id = song.id;
     riff.textContent = 'Loop Trainer';
     card.querySelector('.buttons')!.replaceChildren(...(this.purpose === 'riff' ? [riff, play] : [play, riff]));
+    card.querySelector('.buttons')!.before(this.levelSection(song));
     if (this.hooks.scoreAttack) card.querySelector('.buttons')!.after(this.attackSection(song));
     card.hidden = false;
     this.root.classList.add('with-card');
@@ -494,6 +498,48 @@ export class Library {
     this.openCard(main, tile, part);
   }
 
+  /** The difficulty to play the song at: Auto, or a level for the whole song. */
+  private levelSection(song: SongEntry): HTMLElement {
+    const chosen = songLevel(song.id);
+    const section = document.createElement('div');
+    section.className = 'card-level';
+    const head = document.createElement('span');
+    head.className = 'card-level-head';
+    head.textContent = t('Difficulté');
+    const name = document.createElement('b');
+    name.textContent = LEVEL_CHOICES.find((c) => c.value === (chosen === null ? 'auto' : String(chosen)))!.label;
+    head.append(' · ', name);
+    const picker = document.createElement('div');
+    picker.className = 'segmented';
+    picker.setAttribute('role', 'group');
+    picker.setAttribute('aria-label', t('Difficulté'));
+    for (const c of LEVEL_CHOICES) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.lib = 'level';
+      b.dataset.value = c.value;
+      b.textContent = c.short;
+      b.title = c.label;
+      b.classList.toggle('on', c.value === (chosen === null ? 'auto' : String(chosen)));
+      picker.append(b);
+    }
+    section.append(head, picker);
+    return section;
+  }
+
+  /** The open card's difficulty drawn again (changed from the pause menu meanwhile). */
+  refreshLevel(): void {
+    const song = this.chosen;
+    if (song) this.el.card.querySelector('.card-level')?.replaceWith(this.levelSection(song));
+  }
+
+  private chooseLevel(value: string): void {
+    const song = this.chosen;
+    if (!song) return;
+    setSongLevel(song.id, value === 'auto' ? null : Number(value));
+    this.el.card.querySelector('.card-level')?.replaceWith(this.levelSection(song));
+  }
+
   /** Score Attack in the card: the difficulties with their records, and the button. */
   private attackSection(song: SongEntry): HTMLElement {
     const scores = this.progress[song.id]?.attack;
@@ -508,6 +554,41 @@ export class Library {
     if (song && section) section.replaceWith(this.attackSection(song));
   }
 }
+
+const SONG_LEVELS = 'opensmith.songLevels';
+
+/** The difficulty chosen for a song on its card (a step of `startLevelFor`, 0 to 4); null: dynamic,
+ * following the player. Kept on this Mac, per song. */
+export function songLevel(id: string): number | null {
+  try {
+    const step = (JSON.parse(saved(SONG_LEVELS) ?? '{}') as Record<string, number>)[id];
+    return typeof step === 'number' && step >= 0 && step <= 4 ? step : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setSongLevel(id: string, step: number | null): void {
+  let all: Record<string, number> = {};
+  try {
+    all = JSON.parse(saved(SONG_LEVELS) ?? '{}') as Record<string, number>;
+  } catch {
+    all = {};
+  }
+  if (step === null) delete all[id];
+  else all[id] = step;
+  store(SONG_LEVELS, JSON.stringify(all));
+}
+
+/** The card's difficulties: dynamic, or a level for the whole song (as the pause menu offers). */
+export const LEVEL_CHOICES: readonly { value: string; short: string; label: string }[] = [
+  { value: 'auto', short: t('Auto'), label: t('Auto · suit ton jeu') },
+  { value: '0', short: '1', label: t('1 · Débutant') },
+  { value: '1', short: '2', label: t('2 · Facile') },
+  { value: '2', short: '3', label: t('3 · Moyen') },
+  { value: '3', short: '4', label: t('4 · Difficile') },
+  { value: '4', short: '5', label: t('5 · Toutes les notes') },
+];
 
 function saved(key: string): string | null {
   try {
