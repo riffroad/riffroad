@@ -508,6 +508,17 @@ Derrière l'autoroute, de vrais lieux en 3D, construits au chargement avec des f
 - **Les pochettes** : l'image du MP3 (pochette d'album ou vignette de vidéo) est extraite à la conversion, recadrée en carré 512 px. Elle apparaît dans la liste des morceaux, l'accordeur, le HUD et l'écran de fin. Sans image, une pochette est générée avec les initiales du titre sur un dégradé propre au morceau.
 - **L'écran de fin** : pochette et titre, la note (S, A, B, C ou D) qui arrive en grand avec sa couleur, un verdict (« Légendaire ! », « Excellent ! »…), une barre par phrase (hauteur = niveau joué, couleur = réussite), les compteurs qui défilent, et un feu d'artifice au-dessus du manche pour une note S, A ou B.
 
+### Du mouvement dans l'interface
+
+Quatre finitions, avec des courbes d'entrée franches et seulement `opacity` et `transform` qui bougent. Avec « réduire les animations », il reste des fondus, sans déplacement.
+
+- **Pochettes** : l'image se fond (0,2 s) par-dessus le dégradé d'initiales au lieu d'apparaître d'un coup ; à l'ouverture de la bibliothèque, plus de dizaines de pochettes qui « sautent » les unes après les autres.
+- **Messages sur l'autoroute** (série de 25, changement de niveau…) : entrée et sortie en transitions CSS (`@starting-style` + classe `.leaving`), donc des messages en rafale se chevauchent sans saut, et le plus ancien sort en glissant au lieu d'être coupé. Durée de vie inchangée (2,6 s). Avant Safari 17.5 (macOS 14.5), pas d'animation d'entrée, le message s'affiche simplement.
+- **Titre du menu** : « Riff » puis « road » arrivent l'un après l'autre (14 px, 0,5 s, 80 ms d'écart) et une lueur ambrée s'allume derrière.
+- **Menu dans une fenêtre basse** : le titre n'est plus coupé au-dessus de l'écran. `justify-content: center` sur une colonne qui défile perd ce qui dépasse en haut, hors d'atteinte du défilement ; des marges `auto` gardent le centrage quand il y a de la place et le menu défile depuis le haut sinon (visible à 960 × 600, le minimum de la fenêtre, ou plus haut avec le bouton « Reprendre »). À 1440 × 900 rien ne bouge.
+
+Vérifié dans le navigateur (mode démo) à 960 × 600 et 1440 × 900 ; pas encore dans la fenêtre Tauri, ni avec un vrai toast de partie (éléments `.toast` injectés).
+
 ### Des tablatures plus propres
 
 Trois traitements, avant le calcul des doigtés, pour que la tablature ressemble à celle qu'un humain écrirait :
