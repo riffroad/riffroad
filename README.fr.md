@@ -22,7 +22,12 @@ d'ampli et une carrière du garage au stade.
   Maître, Score Attack.
 - **Carrière** : des concerts chaque semaine, une setlist, un public qui réagit à chaque note,
   un groupe, du matos, un label, des festivals et un groupe rival.
-- **Un morceau de démo** est dans la bibliothèque dès le premier lancement, pour jouer tout de
+- **En ligne, si tu veux** (app de bureau, compte gratuit) : ta carrière et ta progression sur
+  tous tes Mac, avec les cinq sauvegardes d'avant ; le **Défi mondial**, un morceau du jeu par
+  semaine et un classement pour tous ; un **fantôme** à battre en Score Attack ; une **série** de
+  jours d'entraînement ; la **bataille des groupes** avec ceux de tes amis ; et des événements
+  comme des festivals le week-end. Le serveur est libre lui aussi ([cloud/](cloud/README.md)).
+- **Cinq morceaux** sont dans la bibliothèque dès le premier lancement, pour jouer tout de
   suite.
 
 ## Prérequis
@@ -66,15 +71,22 @@ L'app arrive dans `app/src-tauri/target/release/bundle/`. Voir
    installe aussi le convertisseur, quelques minutes).
 4. Essaie la **Carrière**, le **Loop Trainer** sur un passage difficile, et **Réglages → Jeu →
    Langue** (anglais ou français).
+5. **Réglages → Compte** : un compte garde tes sauvegardes sur tous tes Mac et t'inscrit au
+   classement du **Défi mondial** (menu). Confirme ton e-mail avec le lien reçu.
 
 Pas de guitare sous la main ? L'interrupteur **Démo auto** (en haut à droite) fait jouer le jeu
 tout seul.
 
 ## FAQ
 
-**Des morceaux sont-ils fournis ?** Seulement le morceau de démo, généré par du code. Tu
-apportes ta musique : Riffroad convertit les fichiers que tu as, sur ton Mac. Rien n'est
-envoyé en ligne.
+**Des morceaux sont-ils fournis ?** Cinq : First Riff, généré par du code, et quatre morceaux
+rock de Shane Ivers sous licence CC BY 4.0. Au-delà, tu apportes ta musique : Riffroad
+convertit les fichiers que tu as, sur ton Mac, et tes morceaux n'en sortent jamais.
+
+**Qu'est-ce qui part en ligne ?** Rien sans compte. Avec un compte : tes sauvegardes de carrière
+et de progression (et les cinq d'avant), le pseudo choisi pour les classements, tes parties du
+Défi mondial et la fiche de ton groupe pour tes amis (nom, acte, fans). Jamais tes morceaux, ton
+e-mail n'est jamais affiché, et **Réglages → Compte → Supprimer mon compte** efface tout.
 
 **Que valent les partitions faites depuis un MP3 ?** Bien pour les riffs et les parties
 claires ; approximatives sur les guitares denses, saturées ou superposées, où l'IA rate
@@ -103,7 +115,9 @@ d'accompagnement, pochette).
 
 ## Pour les développeurs
 
-[CONTRIBUTING.md](CONTRIBUTING.md) explique l'organisation, l'installation et les tests. Les
+[CONTRIBUTING.md](CONTRIBUTING.md) explique l'organisation, l'installation et les tests ;
+[cloud/README.md](cloud/README.md) le serveur en ligne (tests contre les émulateurs Firebase,
+déploiement, événements). Les
 outils en ligne de commande (`opensmith-ingest` pour convertir des morceaux, `opensmith-diag`
 pour tester le moteur audio) et toutes les fonctions de l'app sont décrits dans
 [docs/guide.fr.md](docs/guide.fr.md) ; [PROGRESS.md](PROGRESS.md) est le journal de ce qui a

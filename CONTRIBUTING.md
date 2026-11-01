@@ -1,6 +1,6 @@
 # Contributing to Riffroad
 
-Thanks for wanting to help. Riffroad is a guitar game for macOS in three parts:
+Thanks for wanting to help. Riffroad is a guitar game for macOS in three parts, and an online server:
 
 | Folder | What | Language |
 |---|---|---|
@@ -8,6 +8,7 @@ Thanks for wanting to help. Riffroad is a guitar game for macOS in three parts:
 | `app/` | the desktop app: Tauri v2 shell (`src-tauri`) and the note highway, HUD and screens (`src`, Three.js) | Rust + TypeScript |
 | `pipeline-ingest/` | songs and tabs → playable charts: Demucs, Basic Pitch, Viterbi fingering, Guitar Pro / XML import, plugin commands | Python |
 | `schema/` | the chart format shared by all three | JSON Schema |
+| `cloud/` | the online side: saves on every Mac, the weekly challenge's board, friends, events ([cloud/README.md](cloud/README.md)) | Rust (axum, Firestore) |
 
 The guitar signal never goes through Python or JavaScript: everything time-critical is Rust.
 
@@ -62,6 +63,21 @@ cd app && npx tsc --noEmit -p . && npx vitest run
 ```bash
 cd pipeline-ingest && uv run pytest
 ```
+
+The server, against the Firebase emulators (Java 21 and `firebase-tools`; without them these
+tests say they were skipped and pass), then the app's client against it:
+
+```bash
+cd cloud && firebase emulators:exec --project demo-opensmith --only auth,firestore 'cargo test'
+```
+
+```bash
+cd cloud && firebase emulators:exec --project demo-opensmith --only auth,firestore 'cargo test --manifest-path ../app/src-tauri/Cargo.toml cloud'
+```
+
+A change to `cloud/` merged on `main` is deployed by GitHub once these tests pass
+(`.github/workflows/deploy-cloud.yml`). An event (a festival, a weekly challenge picked by hand)
+is a few lines in `cloud/server/events.json`.
 
 The end-to-end pipeline runs (stem separation and transcription on a synthetic song, about a
 minute) are not in CI; run them when you touch the pipeline:

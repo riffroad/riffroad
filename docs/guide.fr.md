@@ -212,6 +212,19 @@ Tests de l'interface :
 npm test
 ```
 
+## En ligne
+
+Dans l'app de bureau, avec un compte gratuit (**Réglages → Compte**, e-mail confirmé par le lien reçu) :
+
+- **Sauvegardes sur tous tes Mac** : la carrière et la progression (scores, leçons, jours joués) partent quand elles changent et reviennent depuis le menu. Si elles ont changé des deux côtés, le jeu demande laquelle garder ; les cinq sauvegardes d'avant restent en ligne (**Revenir en arrière**).
+- **Défi mondial** (menu) : un des morceaux fournis par semaine, en Score Attack, le même pour tout le monde. Ta meilleure partie de la semaine entre au classement sous le pseudo que tu choisis ; il repart à zéro chaque lundi (00 h UTC).
+- **Fantôme** : en Score Attack, ta meilleure partie de ce morceau et de ce niveau court avec toi, son score et l'écart en direct ; au Défi mondial, c'est la partie juste au-dessus de la tienne.
+- **Série** : 5 min de vraie guitare par jour (pas la démo auto) gardent la série, sous le titre du menu ; les douze dernières semaines sont dans les Trophées.
+- **Bataille des groupes** (écran du Défi mondial) : ton code ami de six lettres, les codes de tes amis, et vos groupes classés par fans gagnés en carrière cette semaine.
+- **Événements** : un bandeau au menu ; un festival multiplie les fans et les cachets des concerts de carrière pendant qu'il dure.
+
+Le serveur est dans `cloud/` (Rust, axum, Firestore sur un projet Firebase) ; [cloud/README.md](../cloud/README.md) dit comment le tester contre les émulateurs, le déployer (GitHub le redéploie à chaque changement de `cloud/` sur `main`) et annoncer un événement (`cloud/server/events.json`).
+
 ## Organisation
 
 | Dossier | Rôle |
@@ -224,3 +237,4 @@ npm test
 | `schema` | Format des charts (JSON Schema), partagé entre Python, Rust et l'app |
 | `pipeline-ingest` | MP3 → stems (Demucs) → notes (Basic Pitch) → doigtés (Viterbi) → chart ; imports Guitar Pro, autres formats par plugins |
 | `app` | Application Tauri v2 (`src-tauri`) + autoroute de notes Three.js, HUD et écrans (`src`) |
+| `cloud` | Serveur en ligne (`server`, Rust/axum sur Cloud Run, Firestore) et le contrat qu'il partage avec l'app (`api`) |
