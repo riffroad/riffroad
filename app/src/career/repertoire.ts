@@ -17,6 +17,20 @@ export interface Learned {
 /** Song id → what the band knows of it. */
 export type Repertoire = Record<string, Learned>;
 
+/** `record` with its entries moved to their new ids (`moves`: old id → new), one already at its
+ * new id kept; null when nothing moves. */
+export function moved<T>(record: Readonly<Record<string, T>>, moves: ReadonlyMap<string, string>): Record<string, T> | null {
+  const out = { ...record };
+  let changed = false;
+  for (const [from, to] of moves) {
+    if (!(from in out)) continue;
+    if (!(to in out)) out[to] = out[from];
+    delete out[from];
+    changed = true;
+  }
+  return changed ? out : null;
+}
+
 /** What the scout reads of a song. */
 export interface Scouted {
   id: string;

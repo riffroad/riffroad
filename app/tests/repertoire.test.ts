@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { concludeGig, newCareer, VENUES, weekIndex, type Career, type GigSong } from '../src/career/career';
-import { density, FADE, formFactor, formOf, learn, NEW_FORM, rating, rehearse, sanitizeRepertoire, scout, starter, type Scouted } from '../src/career/repertoire';
+import { density, FADE, formFactor, formOf, learn, moved, NEW_FORM, rating, rehearse, sanitizeRepertoire, scout, starter, type Scouted } from '../src/career/repertoire';
 
 // Ten songs of 4 minutes, from 30 to 300 notes a minute.
 const library: Scouted[] = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, notes: (i + 1) * 120, chords: 0, duration: 240 }));
 
 describe('repertoire', () => {
+  it('moves what it knew of an MP3 by its draft notes to its chords part', () => {
+    const moves = new Map([['song/song_chart.json', 'song/song_chart.chords.json']]);
+    const learned = { form: 0.8, played: 3, since: 1 };
+    expect(moved({ 'song/song_chart.json': learned, other: learned }, moves)).toEqual({ 'song/song_chart.chords.json': learned, other: learned });
+    // Already there under its chords: that one is kept, the draft's dropped.
+    const fresh = { form: 1, played: 4, since: 4 };
+    expect(moved({ 'song/song_chart.json': learned, 'song/song_chart.chords.json': fresh }, moves)).toEqual({ 'song/song_chart.chords.json': fresh });
+    // Nothing to move: said so, nothing copied.
+    expect(moved({ other: learned }, moves)).toBeNull();
+  });
+
   it('rates a song out of 99 from its mastery and form', () => {
     expect(rating(0, 0)).toBe(40);
     expect(rating(0, NEW_FORM)).toBe(47);

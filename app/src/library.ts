@@ -21,6 +21,20 @@ export const isDraft = (part: SongEntry): boolean => sourceOf(part) === 'ai' && 
 export const partLabel = (part: SongEntry): string =>
   isDraft(part) ? t('{part} (brouillon)', { part: arrangementLabel(part.arrangement) }) : arrangementLabel(part.arrangement);
 
+/** The part a song is played in when no one chooses: an MP3's chords (its notes are a draft),
+ * else the song itself. */
+export const playedPart = (song: SongEntry): SongEntry => preferredPart(song, null);
+
+/** Songs played in another of their parts (an MP3: its chords): the song's id → that part's. */
+export function partMoves(songs: readonly SongEntry[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const song of songs) {
+    const part = playedPart(song);
+    if (part.id !== song.id) out.set(song.id, part.id);
+  }
+  return out;
+}
+
 /** The arrangement of `song` to show first: an MP3's chords (its notes are a draft), else the
  * kind the player last chose, if it has one. */
 export function preferredPart(song: SongEntry, kind: string | null): SongEntry {

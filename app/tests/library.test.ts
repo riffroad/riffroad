@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aboutSource, chordLabel, EVERY_SONG, FIRST_TILES, fold, parseChord, partLabel, partsOf, phraseMastery, preferredPart, selectSongs, SOURCES, sourceOf, tileBatches, tuningsOf } from '../src/library';
+import { aboutSource, chordLabel, EVERY_SONG, FIRST_TILES, fold, parseChord, partLabel, partMoves, partsOf, phraseMastery, playedPart, preferredPart, selectSongs, SOURCES, sourceOf, tileBatches, tuningsOf } from '../src/library';
 import { findSong, type SongEntry } from '../src/engine/types';
 import { emptyProgress, type Progress } from '../src/progress';
 
@@ -48,6 +48,10 @@ describe('library', () => {
     const tab = { ...lead, source: 'guitarpro', hasAudio: true, others: [{ ...chords, source: 'guitarpro', arrangement: 'Rhythm' }] };
     expect(preferredPart(tab, 'lead').id).toBe('m');
     expect(partLabel(tab)).toBe('Lead');
+    // Played without a choice (the career): the MP3 in its chords, the tab as itself.
+    expect(playedPart(mp3).id).toBe('m2');
+    expect(playedPart(tab).id).toBe('m');
+    expect([...partMoves([mp3, tab])]).toEqual([['m', 'm2']]);
   });
 
   it('says the chords of an MP3 count major or minor', () => {

@@ -25,7 +25,7 @@ import { Highway } from './highway/highway';
 import { isScenery, SCENERIES, type SceneryId } from './highway/scenery';
 import { Hud } from './hud';
 import { Imports } from './imports';
-import { arrangementLabel, Library, partLabel, partsOf, setSongLevel, songLevel, type LibraryPurpose } from './library';
+import { arrangementLabel, Library, partLabel, partMoves, partsOf, playedPart, setSongLevel, songLevel, type LibraryPurpose } from './library';
 import { gradeFor, record, recordAttack, recordPass, type Progress } from './progress';
 import { AttackHud, attackLevel, AttackRun, attackStartLevel, attackSummary, STRIKES, type AttackDifficulty } from './score-attack';
 import { accelerated, countNotes, percent, riffLoop, RiffPanel, roundSpeed, type PhraseState, type RiffChoice } from './riff';
@@ -83,7 +83,7 @@ import { settleChallenge, TIERS, type Challenge } from './career/challenge';
 import { changes, learnSkills, ratingOf, sampleOf, SKILLS, type SkillId } from './career/skills';
 import { drillFor, DRILL_GOAL } from './career/training';
 import { levelOf } from './career/difficulty';
-import { rehearse, REHEARSAL, starter } from './career/repertoire';
+import { moved, rehearse, REHEARSAL, starter } from './career/repertoire';
 import { Crowd } from './career/crowd';
 import { CareerScreen } from './career/screen';
 import { AccountChip, AccountPanel, askWhichSave, tauriCloud } from './account';
@@ -512,11 +512,35 @@ function notice(text: string): void {
   window.setTimeout(() => card.remove(), 6500);
 }
 
+/** The songs the career plays: an MP3's chords rather than its draft notes (its repertoire, takes
+ * and progress go by that part). */
+const careerSongs = (): SongEntry[] => songs.filter((s) => s.hasAudio !== false).map(playedPart);
+
+/** Progress as the career reads it: an MP3's chords stand on its draft's until they are played. */
+function careerProgress(): Progress {
+  const moves = partMoves(songs);
+  if (!moves.size) return progress;
+  const out = { ...progress };
+  for (const [from, to] of moves) if (!out[to] && out[from]) out[to] = out[from];
+  return out;
+}
+
+/** A career from before an MP3 was played in its chords: the songs it knows and recorded by
+ * their draft notes move to their chords part. */
+function moveCareerToChords(): void {
+  const moves = partMoves(songs);
+  const repertoire = moved(career.repertoire, moves);
+  const takes = moved(career.album.takes, moves);
+  if (!repertoire && !takes) return;
+  career = { ...career, repertoire: repertoire ?? career.repertoire, album: { ...career.album, takes: takes ?? career.album.takes } };
+  storeCareer();
+}
+
 /** A career without a repertoire yet (new, or from before repertoires) gets its first songs:
  * those it played on stage, else the easiest of the library. */
 function seedRepertoire(): void {
   if (Object.keys(career.repertoire).length) return;
-  const playable = songs.filter((s) => s.hasAudio !== false);
+  const playable = careerSongs();
   if (!playable.length) return;
   const played = career.history.flatMap((r) => r.songs.map((s) => s.id));
   career = { ...career, repertoire: starter(playable, played, weekIndex(career), MIN_SONG) };
@@ -1432,8 +1456,8 @@ async function start(id: string, riffOpening = false): Promise<void> {
 }
 
 const careerScreen = new CareerScreen($('career'), {
-  songs: () => songs.filter((s) => s.hasAudio !== false),
-  progress: () => progress,
+  songs: careerSongs,
+  progress: careerProgress,
   coverUrl: (song) => engine.coverUrl(song),
   play: (offer, setlist) => startGig(offer, setlist),
   rest: () => {
@@ -1751,6 +1775,7 @@ async function openCareer(): Promise<void> {
   await careerLoaded;
   // The week's challenge, the repertoire: songs of the library.
   if (!songs.length) await loadLibrary();
+  moveCareerToChords();
   seedRepertoire();
   setMode('career');
   careerScreen.showHub(career);
@@ -1807,10 +1832,11 @@ function gigSongEnded(): void {
 /** Songs for an encore: the best mastered of the repertoire not played tonight, else one of the
  * night again. */
 function encoreChoices(run: GigRun): SongEntry[] {
-  const playable = songs.filter((s) => s.hasAudio !== false && s.id in career.repertoire);
+  const playable = careerSongs().filter((s) => s.id in career.repertoire);
+  const mastered = careerProgress();
   const fresh = playable
     .filter((s) => !run.setlist.includes(s.id))
-    .sort((a, b) => (progress[b.id]?.mastery ?? 0) - (progress[a.id]?.mastery ?? 0) || a.title.localeCompare(b.title));
+    .sort((a, b) => (mastered[b.id]?.mastery ?? 0) - (mastered[a.id]?.mastery ?? 0) || a.title.localeCompare(b.title));
   const again = playable.filter((s) => run.setlist.includes(s.id));
   return [...fresh, ...again].slice(0, 3);
 }
@@ -1861,7 +1887,7 @@ function playEncore(id: string): void {
 
 function showInterlude(grade: string): void {
   const run = gig!;
-  const next = songs.find((s) => s.id === run.setlist[run.songs.length]);
+  const next = findSong(songs, run.setlist[run.songs.length]);
   const crowd = run.crowd.value;
   $('interludeVenue').textContent = run.offer.venue.name;
   $('interludeTitle').textContent = t('Morceau {n} sur {total} · note {grade}', { n: run.songs.length, total: run.setlist.length, grade });
@@ -1870,7 +1896,7 @@ function showInterlude(grade: string): void {
   $('interludeCrowdText').textContent = t('Public {crowd} %', { crowd: Math.round(crowd * 100) });
   const retune = next && current && next.tuning !== current.tuning;
   // The second guitar holds a second tuning: going back and forth between them is free.
-  const tunings = run.setlist.map((id) => songs.find((s) => s.id === id)?.tuning ?? '');
+  const tunings = run.setlist.map((id) => findSong(songs, id)?.tuning ?? '');
   const costs = retunes(tunings, guitarsOf(career))[run.songs.length];
   const tuning = !next
     ? ''

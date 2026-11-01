@@ -36,8 +36,8 @@ It does not replace a Developer ID: Gatekeeper still asks on first launch (below
 |---|---|
 | Song library | `~/Music/OpenSmith` (`OPENSMITH_LIBRARY` to change it) |
 | Song converter (Python pipeline) | carried inside the app, installed on the first import into `~/Library/Application Support/app.opensmith.desktop/pipeline-ingest` |
-| Settings, progress | the app's web storage |
-| Career | `~/Library/Application Support/app.opensmith.desktop/career.json` |
+| Settings | the app's web storage |
+| Progress, career | the library folder: `progress.json`, `career.json` |
 | Account sign-in (e-mail, refresh token) | `~/Library/Application Support/app.opensmith.desktop/account.json`, readable by the player only (0600); signing out deletes it |
 
 The first import installs the converter: `uv sync` downloads Python 3.11, PyTorch, Demucs and
