@@ -64,38 +64,63 @@ pub struct Kept {
     pub name: Option<String>,
 }
 
-/// Where the sign-in is kept: the system's keychain, or memory (tests).
+/// Where the sign-in is kept: a file of the app's own, or memory (tests).
 pub trait Keep: Send + Sync {
     fn load(&self) -> Option<Kept>;
     fn store(&self, kept: &Kept);
     fn clear(&self);
 }
 
-pub struct Keychain;
+/// The sign-in in a file only the player can read (`account.json` in the app's data folder),
+/// not the keychain: macOS ties a keychain item to the exact build of an app without an Apple
+/// team, and asked for the player's password after every update. What it holds signs into a
+/// game account, nothing more.
+pub struct FileKeep {
+    path: std::path::PathBuf,
+}
 
-impl Keychain {
-    fn entry() -> Option<keyring::Entry> {
-        keyring::Entry::new("OpenSmith", "account").ok()
+impl FileKeep {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self { path }
+    }
+
+    /// `account.json` in the app's data folder (`~/Library/Application Support/<identifier>`).
+    pub fn in_app_data(identifier: &str) -> Self {
+        Self::new(dirs::data_dir().unwrap_or_else(std::env::temp_dir).join(identifier).join("account.json"))
+    }
+
+    /// The text written whole or not at all, readable by its owner only.
+    fn write(&self, text: &str) -> std::io::Result<()> {
+        use std::io::Write as _;
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = self.path.with_extension("json.tmp");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, &self.path)
     }
 }
 
-impl Keep for Keychain {
+impl Keep for FileKeep {
     fn load(&self) -> Option<Kept> {
-        serde_json::from_str(&Self::entry()?.get_password().ok()?).ok()
+        serde_json::from_str(&std::fs::read_to_string(&self.path).ok()?).ok()
     }
 
     fn store(&self, kept: &Kept) {
-        if let (Some(entry), Ok(text)) = (Self::entry(), serde_json::to_string(kept))
-            && let Err(e) = entry.set_password(&text)
-        {
-            eprintln!("compte : trousseau indisponible ({e})");
+        let written = serde_json::to_string(kept).map_err(std::io::Error::other).and_then(|text| self.write(&text));
+        if let Err(e) = written {
+            eprintln!("compte : connexion non gardée ({e})");
         }
     }
 
     fn clear(&self) {
-        if let Some(entry) = Self::entry() {
-            let _ = entry.delete_credential();
-        }
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -583,6 +608,27 @@ impl Cloud {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn keeps_the_sign_in_in_a_file_only_its_owner_reads() {
+        let dir = std::env::temp_dir().join(format!("riffroad-keep-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let keep = FileKeep::new(dir.join("app").join("account.json"));
+        assert_eq!(keep.load(), None);
+        let kept = Kept { uid: "u1".into(), email: "a@b.c".into(), refresh_token: "r1".into(), photo: Some("https://x/p.png".into()), name: None };
+        keep.store(&kept);
+        assert_eq!(keep.load(), Some(kept.clone()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("app").join("account.json")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "readable by its owner only");
+        }
+        keep.store(&Kept { refresh_token: "r2".into(), ..kept });
+        assert_eq!(keep.load().map(|k| k.refresh_token), Some("r2".into()));
+        keep.clear();
+        assert_eq!(keep.load(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn words_firebase_refusals() {

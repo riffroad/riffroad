@@ -1,7 +1,7 @@
 [package]
 name = "opensmith-app"
 description = "OpenSmith desktop app: Tauri shell around the game session"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.90"
 license = "GPL-3.0-or-later"
@@ -29,7 +29,6 @@ opensmith-session = { path = "../../engine-rt/session" }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls"] }
 tokio = { version = "1.54.1", features = ["sync"] }
 opensmith-cloud = { version = "0.1.0", path = "../../cloud/api" }
-keyring = "4.2.0"
 sha2 = "0.10"
 base64 = "0.22"
 

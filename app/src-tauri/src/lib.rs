@@ -1116,7 +1116,7 @@ pub fn run() {
     let _ = fs::create_dir_all(&root);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(cloud::Cloud::new(cloud::Config::from_env(), Box::new(cloud::Keychain)))
+        .manage(cloud::Cloud::new(cloud::Config::from_env(), Box::new(cloud::FileKeep::in_app_data("app.opensmith.desktop"))))
         .setup(move |app| {
             // The page shows the window once drawn; should it fail, the window appears anyway.
             if let Some(window) = app.get_webview_window("main") {
