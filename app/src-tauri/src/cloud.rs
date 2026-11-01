@@ -12,10 +12,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-/// The OpenSmith project: its public Firebase key (an identifier, not a secret) and its
-/// server. Empty until the project is online: the account stays hidden.
-const FIREBASE_KEY: &str = "";
-const SERVER: &str = "";
+/// Riffroad's Firebase project (`studio-998403342-4f8d5`): its public key (an identifier, not a
+/// secret, limited to sign-in and token refresh) and its server (`cloud/deploy.sh`). Either one
+/// empty hides the account.
+const FIREBASE_KEY: &str = "AIzaSyAx3pCQVTLhUjm87E2k8eaPxkfex5FsNWs";
+const SERVER: &str = "https://opensmith-api-ju6xor62bq-ew.a.run.app";
 
 /// Where the cloud is (overridden by `OPENSMITH_FIREBASE_KEY`, `OPENSMITH_CLOUD_URL` and
 /// `FIREBASE_AUTH_EMULATOR_HOST`, for development and tests).

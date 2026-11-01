@@ -2,7 +2,8 @@
 # Puts Riffroad's online side on a Firebase project, or deploys a new version of the server:
 #   ./deploy.sh <project-id> [billing-account-id]
 # The billing account (Cloud Run needs one) is linked, and a 5-unit monthly budget alert set on
-# it, only when given. Uses your own `gcloud` and `firebase` logins. Run from anywhere.
+# it, only when given. Uses your own `gcloud` and `firebase` logins (`CLOUDSDK_CORE_ACCOUNT=…` picks
+# the gcloud one). Run from anywhere.
 set -euo pipefail
 P=${1:?usage: ./deploy.sh <project-id> [billing-account-id]}
 BILLING=${2:-}
@@ -14,8 +15,11 @@ gc() { gcloud --project "$P" --quiet "$@"; }
 
 if [ -n "$BILLING" ]; then
   gcloud billing projects link "$P" --billing-account "$BILLING" --quiet
-  gcloud billing budgets create --billing-account "$BILLING" --display-name "Riffroad" --budget-amount 5 \
-    --filter-projects "projects/$P" --threshold-rule percent=0.5 --threshold-rule percent=1.0 --quiet || true
+  # The budget API is asked through this project, not whichever gcloud uses by default.
+  gc services enable billingbudgets.googleapis.com
+  gcloud billing budgets create --billing-account "$BILLING" --billing-project "$P" --display-name "Riffroad" --budget-amount 5 \
+    --filter-projects "projects/$P" --threshold-rule percent=0.5 --threshold-rule percent=1.0 --quiet \
+    || echo "!! No budget alert yet (the API can take a minute after being turned on): run this command again"
 fi
 
 echo "== Services"
@@ -30,7 +34,7 @@ echo "== Sign-in by e-mail and password"
 curl -sf -X PATCH "https://identitytoolkit.googleapis.com/admin/v2/projects/$P/config?updateMask=signIn.email" \
   -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "x-goog-user-project: $P" -H "Content-Type: application/json" \
   -d '{"signIn":{"email":{"enabled":true,"passwordRequired":true}}}' >/dev/null \
-  || echo "!! Turn it on by hand: https://console.firebase.google.com/project/$P/authentication/providers (Email/Password)"
+  || echo "!! Turn it on by hand (a project whose Authentication was never opened: \"Get started\" first): https://console.firebase.google.com/project/$P/authentication/providers (Email/Password)"
 
 echo "== The server's own account: Firestore only"
 gc iam service-accounts describe "$SA" >/dev/null 2>&1 || gc iam service-accounts create "$SERVICE" --display-name "Riffroad server"
