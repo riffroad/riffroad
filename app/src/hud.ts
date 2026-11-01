@@ -197,8 +197,17 @@ export class Hud {
       div.append(detail);
     }
     this.el.toasts.append(div);
-    while (this.el.toasts.children.length > 3) this.el.toasts.firstElementChild!.remove();
-    setTimeout(() => div.remove(), 2600);
+    // Over three, the oldest leave (their exit plays) instead of vanishing.
+    const shown = [...this.el.toasts.children].filter((c) => !c.classList.contains('leaving'));
+    for (const old of shown.slice(0, Math.max(0, shown.length - 3))) this.dismiss(old as HTMLElement);
+    setTimeout(() => this.dismiss(div), 2400);
+  }
+
+  /** A toast leaves: its exit transition (0.2 s) plays, then it is removed. */
+  private dismiss(toast: HTMLElement): void {
+    if (toast.classList.contains('leaving')) return;
+    toast.classList.add('leaving');
+    setTimeout(() => toast.remove(), 200);
   }
 
   /** Updates a text node only when it changes; true if it did. */

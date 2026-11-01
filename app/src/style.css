@@ -296,7 +296,34 @@ body {
   border: 1px solid var(--line);
   text-align: center;
   backdrop-filter: blur(8px);
-  animation: toast 2.6s ease forwards;
+  transition:
+    opacity 0.2s cubic-bezier(0.23, 1, 0.32, 1),
+    transform 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* In and out are transitions, not keyframes: toasts arriving in a burst overlap without a jump. */
+@starting-style {
+  .toast {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+}
+
+.toast.leaving {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @starting-style {
+    .toast {
+      transform: none;
+    }
+  }
+
+  .toast.leaving {
+    transform: none;
+  }
 }
 
 .toast b {
@@ -327,24 +354,6 @@ body {
 .toast.streak b,
 .toast.perfect b {
   color: var(--gold);
-}
-
-@keyframes toast {
-  0% {
-    opacity: 0;
-    transform: translateY(-10px) scale(0.96);
-  }
-  10% {
-    opacity: 1;
-    transform: none;
-  }
-  80% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
 }
 
 .countdown {
