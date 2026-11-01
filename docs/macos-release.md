@@ -9,6 +9,17 @@ cd app && npm ci && npm run tauri build
 The app and a disk image land in `app/src-tauri/target/release/bundle/` (`macos/Riffroad.app`,
 `dmg/Riffroad_<version>_aarch64.dmg`). Apple Silicon only.
 
+**Signing in with Google** needs the desktop OAuth client's secret at build time (it stays out of
+the repository; `app/src-tauri/src/google.rs` has the client's id). Kept in
+`~/.config/riffroad/google-oauth.env` (`RIFFROAD_GOOGLE_CLIENT_SECRET=…`, from Google Cloud →
+Google Auth Platform → Clients → « Riffroad desktop app »):
+
+```bash
+set -a; . ~/.config/riffroad/google-oauth.env; set +a; cd app && npm run tauri build
+```
+
+Without it the app builds the same and simply offers no Google button (e-mail sign-in stays).
+
 ## What a built app uses on the player's Mac
 
 | What | Where |

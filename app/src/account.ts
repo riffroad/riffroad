@@ -39,6 +39,10 @@ export function cloudError(code: unknown): string {
       return t('Trop de synchronisations d’un coup : réessaie dans une minute.');
     case 'too-large':
       return t('Sauvegarde trop grosse pour être envoyée.');
+    case 'cancelled':
+      return t('Connexion avec Google annulée.');
+    case 'account-exists':
+      return t('Un compte avec mot de passe existe déjà pour cet e-mail : connecte-toi avec lui.');
     case 'unverified':
       return t('Confirme ton e-mail (le lien reçu) pour envoyer tes sauvegardes.');
     default:
@@ -73,6 +77,50 @@ export function askWhichSave(slot: Slot, online: OnlineSave): Promise<Choice> {
   });
 }
 
+/** Google's "G", for its sign-in button (Google's branding guidelines). */
+const GOOGLE_G = `<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>`;
+
+/** The account's round picture: Google's photo, else the first letter of the name or e-mail. */
+export function avatar(status: CloudStatus, className = 'avatar'): HTMLElement {
+  const box = document.createElement('span');
+  box.className = className;
+  const letter = (status.name || status.email || '?').trim().charAt(0).toUpperCase();
+  box.textContent = status.email ? letter : '';
+  if (!status.email) box.classList.add('signed-out');
+  if (status.photo) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    img.src = status.photo;
+    img.onload = () => box.replaceChildren(img);
+  }
+  return box;
+}
+
+/** The account button at the top right of the menus: the player's picture, or a sign-in. */
+export class AccountChip {
+  private readonly el: HTMLButtonElement;
+
+  constructor(open: () => void) {
+    this.el = document.createElement('button');
+    this.el.type = 'button';
+    this.el.className = 'account-chip';
+    this.el.hidden = true;
+    this.el.addEventListener('click', open);
+    document.body.append(this.el);
+  }
+
+  /** Shown in the menus, once there is an online service; the HUD makes room for it. */
+  show(on: boolean, status: CloudStatus | null): void {
+    const visible = on && !!status?.available;
+    this.el.hidden = !visible;
+    document.body.classList.toggle('with-account-chip', visible);
+    if (!visible || !status) return;
+    this.el.title = status.email ? t('Compte : {who}', { who: status.name || status.email }) : t('Se connecter');
+    this.el.replaceChildren(avatar(status));
+  }
+}
+
 export interface AccountHooks {
   /** A full sync now (after signing in, or asked): its outcome in words. */
   sync(): Promise<string>;
@@ -80,6 +128,8 @@ export interface AccountHooks {
   signedOut(): void;
   /** An old save put back (the page then reloads). */
   restore(slot: Slot, version: number): Promise<void>;
+  /** Signed in, out, or the account deleted: the status now (the account button follows). */
+  changed(status: CloudStatus): void;
 }
 
 export class AccountPanel {
@@ -106,6 +156,7 @@ export class AccountPanel {
     // Signed in: whether the e-mail is confirmed by now.
     if (this.status.email && this.status.verified !== true) this.status = await tauriCloud.check().catch(() => this.status);
     this.render();
+    this.hooks.changed(this.status);
   }
 
   private el<T extends HTMLElement>(name: string): T {
@@ -125,6 +176,7 @@ export class AccountPanel {
         <section class="account">
           <h3>${t('Ton compte Riffroad')}</h3>
           <p class="help">${intro}</p>
+          ${this.status.google ? `<button class="google-button" data-account="google">${GOOGLE_G}<span>${t('Continuer avec Google')}</span></button><p class="help or">${t('ou avec un e-mail')}</p>` : ''}
           <label class="row">${t('E-mail')} <input type="email" data-el="email" autocomplete="email" /></label>
           <label class="row">${t('Mot de passe')} <input type="password" data-el="password" autocomplete="current-password" /></label>
           <div class="row-actions">
@@ -150,7 +202,7 @@ export class AccountPanel {
       <section class="account">
         <h3>${t('Ton compte Riffroad')}</h3>
         ${confirm}
-        <p>${t('Connecté :')} <b data-el="who"></b></p>
+        <p class="account-who"><span data-el="avatar"></span>${t('Connecté :')} <b data-el="who"></b></p>
         <p class="help">${intro} ${t('Sur un autre Mac, connecte-toi avec le même compte.')}</p>
         <div class="row-actions">
           <button class="action primary small" data-account="sync">${t('Synchroniser maintenant')}</button>
@@ -168,7 +220,8 @@ export class AccountPanel {
         <p class="help">${t('Tes sauvegardes en ligne et ton compte sont effacés ; celles de ce Mac restent.')}</p>
         <button class="action small danger" data-account="delete">${t('Supprimer mon compte')}</button>
       </section>`;
-    this.el('who').textContent = this.status.email;
+    this.el('who').textContent = this.status.name ? `${this.status.name} (${this.status.email})` : this.status.email;
+    this.el('avatar').replaceWith(avatar(this.status, 'avatar large'));
     this.el('to')?.replaceChildren(this.status.email ?? '');
     void this.showHistory();
   }
@@ -201,10 +254,17 @@ export class AccountPanel {
     const email = this.el<HTMLInputElement>('email')?.value ?? '';
     const password = this.el<HTMLInputElement>('password')?.value ?? '';
     try {
-      if (action === 'sign-in' || action === 'create') {
+      if (action === 'google') {
+        this.say(t('Connexion avec Google dans ton navigateur…'));
+        this.status = await invoke<CloudStatus>('cloud_sign_in_google', { lang: lang() });
+        this.render();
+        this.hooks.changed(this.status);
+        this.say(await this.hooks.sync());
+      } else if (action === 'sign-in' || action === 'create') {
         this.say(t('Connexion…'));
         this.status = await invoke<CloudStatus>('cloud_sign_in', { email, password, create: action === 'create', lang: lang() });
         this.render();
+        this.hooks.changed(this.status);
         this.say(this.status.verified === false ? t('Compte créé : confirme ton e-mail pour envoyer tes sauvegardes.') : await this.hooks.sync());
       } else if (action === 'check') {
         this.status = await tauriCloud.check();

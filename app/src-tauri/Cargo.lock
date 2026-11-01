@@ -3080,6 +3080,7 @@ name = "opensmith-app"
 version = "0.4.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "dirs",
  "keyring",
  "libc",
@@ -3092,6 +3093,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

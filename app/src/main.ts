@@ -85,8 +85,8 @@ import { levelOf } from './career/difficulty';
 import { rehearse, REHEARSAL, starter } from './career/repertoire';
 import { Crowd } from './career/crowd';
 import { CareerScreen } from './career/screen';
-import { AccountPanel, askWhichSave, tauriCloud } from './account';
-import { CloudSync, storagePart } from './cloud';
+import { AccountChip, AccountPanel, askWhichSave, tauriCloud } from './account';
+import { CloudSync, storagePart, type CloudStatus } from './cloud';
 import { lang, LANGS, localize, setLang, t, tn, type Lang } from './i18n';
 import { Perf, tour } from './perf';
 import { thisWeek, weekOf, WorldScreen, type Card as BandCard, type Challenge as WorldChallenge } from './world';
@@ -352,6 +352,8 @@ function cloudSync(pull: boolean): Promise<string> {
     let status = await tauriCloud.status();
     $('accountTab').hidden = !status.available;
     cloudSignedIn = !!status.email;
+    accountStatus = status;
+    accountChip.show(menuModes.includes(mode), status);
     if (!status.email) return '';
     // Saves go up once the e-mail is confirmed; asked again until it is.
     if (status.verified !== true) status = await tauriCloud.check();
@@ -382,7 +384,17 @@ document.addEventListener('visibilitychange', () => {
   if (cloudSignedIn) cloudQuietly(false);
 });
 
+/** The account at the top right of the menus; the last status known. */
+const accountChip = new AccountChip(() => openSettings('account'));
+let accountStatus: CloudStatus | null = null;
+const menuModes = ['menu', 'library', 'imports', 'settings', 'career', 'trophies', 'amp', 'lessons', 'world'];
+
 const accountPanel = new AccountPanel($('accountSettings'), {
+  changed: (status) => {
+    accountStatus = status;
+    cloudSignedIn = !!status.email;
+    accountChip.show(menuModes.includes(mode), status);
+  },
   sync: () => cloudSync(true),
   signedOut: () => {
     cloud?.forget();
@@ -558,7 +570,8 @@ function setMode(next: Mode): void {
   if (mode === 'library' && next !== 'library') engine.preview?.(null, 0);
   mode = next;
   // The hardware strip in the menus; the game's own HUD takes the top during a song.
-  hwHud.show(['menu', 'library', 'imports', 'settings', 'career', 'trophies', 'amp', 'lessons', 'world'].includes(next));
+  hwHud.show(menuModes.includes(next));
+  accountChip.show(menuModes.includes(next), accountStatus);
   for (const [name, el] of Object.entries(screens)) el.hidden = name !== next;
   hud.show(next === 'play' || next === 'pause' || next === 'results');
   if (next === 'results') screens.results.querySelector<HTMLElement>('[data-action="library"]')!.textContent = backLabel();

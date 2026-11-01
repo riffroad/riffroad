@@ -51,6 +51,11 @@ export interface CloudStatus {
   email: string | null;
   /** Whether the e-mail is confirmed (saves go up only then); null until asked. */
   verified: boolean | null;
+  /** The player's picture and name, from Google. */
+  photo?: string | null;
+  name?: string | null;
+  /** Whether signing in with Google is offered. */
+  google?: boolean;
 }
 
 export interface OnlineSave {

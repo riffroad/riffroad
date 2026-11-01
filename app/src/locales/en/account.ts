@@ -55,6 +55,13 @@ export const ACCOUNT: Record<string, string> = {
   'Rien encore : elles arrivent avec les prochaines sauvegardes.': 'Nothing yet: they come with the next saves.',
   'Confirmer : revenir à celle-ci': 'Confirm: go back to this one',
   'Retour à cette sauvegarde…': 'Going back to this save…',
+  // Google, and the account button
+  'Continuer avec Google': 'Continue with Google',
+  'ou avec un e-mail': 'or with an e-mail',
+  'Connexion avec Google dans ton navigateur…': 'Signing in with Google in your browser…',
+  'Connexion avec Google annulée.': 'Signing in with Google was cancelled.',
+  'Un compte avec mot de passe existe déjà pour cet e-mail : connecte-toi avec lui.': 'An account with a password already exists for this e-mail: sign in with it.',
+  'Compte : {who}': 'Account: {who}',
   // Confirming the e-mail
   'Confirme ton e-mail (le lien reçu) pour envoyer tes sauvegardes.': 'Confirm your e-mail (the link you received) to send your saves.',
   'Confirme ton adresse : un lien vient de partir à {email}. Tes sauvegardes partent en ligne dès que c’est fait.':

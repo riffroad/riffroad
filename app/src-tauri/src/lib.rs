@@ -4,6 +4,7 @@
 //! frame for the song time and the game events, and renders the note highway.
 
 mod cloud;
+mod google;
 mod import;
 
 use std::collections::HashMap;
@@ -412,6 +413,13 @@ async fn cloud_rival(cloud: State<'_, cloud::Cloud>) -> Result<Option<opensmith_
 #[tauri::command]
 async fn cloud_submit(cloud: State<'_, cloud::Cloud>, run: opensmith_cloud::Score) -> Result<opensmith_cloud::Board, String> {
     cloud.submit(&run).await.map_err(|e| e.code())
+}
+
+/// Signed in with Google: the browser opens Google's page, then comes back to the app.
+#[tauri::command]
+async fn cloud_sign_in_google(cloud: State<'_, cloud::Cloud>, lang: String) -> Result<cloud::Status, String> {
+    let id_token = google::id_token(&reqwest::Client::new(), &lang).await.map_err(|e| e.code())?;
+    cloud.sign_in_idp(&id_token).await.map_err(|e| e.code())
 }
 
 /// Whether the e-mail is confirmed now (after its link was clicked).
@@ -1146,6 +1154,7 @@ pub fn run() {
             cloud_history,
             cloud_restore,
             cloud_check,
+            cloud_sign_in_google,
             cloud_send_verification,
             cloud_events,
             cloud_profile,

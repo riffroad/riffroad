@@ -57,6 +57,11 @@ pub struct Kept {
     pub uid: String,
     pub email: String,
     pub refresh_token: String,
+    /// Google's picture of the player and their name there (signed in with Google).
+    #[serde(default)]
+    pub photo: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// Where the sign-in is kept: the system's keychain, or memory (tests).
@@ -191,6 +196,11 @@ pub struct Status {
     pub email: Option<String>,
     /// Whether the e-mail is confirmed; None until asked.
     pub verified: Option<bool>,
+    /// The player's picture and name (from Google), for the account button.
+    pub photo: Option<String>,
+    pub name: Option<String>,
+    /// Whether signing in with Google is offered.
+    pub google: bool,
 }
 
 /// What became of a save sent.
@@ -220,12 +230,51 @@ impl Cloud {
     }
 
     pub async fn status(&self) -> Status {
-        let (email, verified) = match self.session.lock().await.as_ref() {
-            Some(s) => (Some(s.kept.email.clone()), s.verified),
-            None => (self.keep.load().map(|k| k.email), None),
+        let (kept, verified) = match self.session.lock().await.as_ref() {
+            Some(s) => (Some(s.kept.clone()), s.verified),
+            None => (self.keep.load(), None),
         };
         let available = self.config.is_some();
-        Status { available, email: email.filter(|_| available), verified: verified.filter(|_| available) }
+        let kept = kept.filter(|_| available);
+        Status {
+            available,
+            email: kept.as_ref().map(|k| k.email.clone()),
+            verified: verified.filter(|_| available),
+            photo: kept.as_ref().and_then(|k| k.photo.clone()),
+            name: kept.and_then(|k| k.name),
+            google: available && crate::google::available(),
+        }
+    }
+
+    /// Signed in with an identity provider's token (Google's ID token): Firebase makes the
+    /// account the first time, finds it after. An account already made by e-mail and password
+    /// for the same address is refused (`account-exists`): sign in with the password instead.
+    pub async fn sign_in_idp(&self, id_token: &str) -> Result<Status, CloudError> {
+        let config = self.config()?;
+        let body = json!({
+            "postBody": format!("id_token={}&providerId=google.com", crate::google::encode(id_token)),
+            "requestUri": "http://localhost",
+            "returnSecureToken": true,
+            "returnIdpCredential": true,
+        });
+        let reply = self.http.post(config.identity("signInWithIdp")).json(&body).send().await.map_err(|_| CloudError::Network)?;
+        let ok = reply.status().is_success();
+        let body: Value = reply.json().await.map_err(|_| CloudError::Network)?;
+        if !ok {
+            return Err(auth_error(body["error"]["message"].as_str().unwrap_or("")));
+        }
+        if body["needConfirmation"].as_bool() == Some(true) {
+            return Err(CloudError::Auth("account-exists"));
+        }
+        let field = |k: &str| body[k].as_str().unwrap_or_default().to_string();
+        let text = |k: &str| body[k].as_str().filter(|v| !v.is_empty()).map(String::from);
+        let kept = Kept { uid: field("localId"), email: field("email"), refresh_token: field("refreshToken"), photo: text("photoUrl"), name: text("displayName") };
+        let seconds = field("expiresIn").parse().unwrap_or(3600u64);
+        self.keep.store(&kept);
+        let until = Instant::now() + Duration::from_secs(seconds.saturating_sub(60));
+        let verified = body["emailVerified"].as_bool();
+        *self.session.lock().await = Some(Session { kept, id_token: field("idToken"), until, verified });
+        Ok(self.status().await)
     }
 
     /// Asks Firebase whether the e-mail is confirmed (a link clicked a moment ago counts: the
@@ -279,7 +328,7 @@ impl Cloud {
             return Err(auth_error(body["error"]["message"].as_str().unwrap_or("")));
         }
         let field = |k: &str| body[k].as_str().unwrap_or_default().to_string();
-        let kept = Kept { uid: field("localId"), email: field("email"), refresh_token: field("refreshToken") };
+        let kept = Kept { uid: field("localId"), email: field("email"), refresh_token: field("refreshToken"), photo: None, name: None };
         let seconds = field("expiresIn").parse().unwrap_or(3600u64);
         self.keep.store(&kept);
         let until = Instant::now() + Duration::from_secs(seconds.saturating_sub(60));
@@ -547,7 +596,7 @@ mod tests {
     #[tokio::test]
     async fn without_a_project_the_account_stays_hidden() {
         let cloud = Cloud::new(None, Box::new(Memory::default()));
-        assert_eq!(cloud.status().await, Status { available: false, email: None, verified: None });
+        assert_eq!(cloud.status().await, Status { available: false, email: None, verified: None, photo: None, name: None, google: false });
         assert_eq!(cloud.pull("career").await, Err(CloudError::Unavailable));
         assert_eq!(cloud.sign_in("a@b.c", "secret-123", true, "fr").await, Err(CloudError::Unavailable));
     }
@@ -569,7 +618,7 @@ mod tests {
 
         let keychain = Arc::new(Memory::default());
         let mac_a = Cloud::new(Some(config.clone()), Box::new(keychain.clone()));
-        assert_eq!(mac_a.status().await, Status { available: true, email: None, verified: None });
+        assert_eq!(mac_a.status().await.email, None);
         assert_eq!(mac_a.sign_in(&email, "123", true, "fr").await, Err(CloudError::Auth("weak-password")));
         let created = mac_a.sign_in(&email, "secret-123", true, "fr").await.unwrap();
         assert_eq!((created.email.as_deref(), created.verified), (Some(email.as_str()), Some(false)));
@@ -629,6 +678,32 @@ mod tests {
         assert_eq!(relaunched.status().await.email, None);
         assert_eq!(keychain.load(), None);
         assert_eq!(mac_b.sign_in(&email, "secret-123", false, "en").await, Err(CloudError::Auth("invalid-credentials")));
+    }
+
+    /// Signing in with Google, against the Auth emulator (which takes a made-up ID token): the
+    /// account made the first time with the picture and name, found again after; its e-mail is
+    /// Google's, already confirmed, so saves go up at once.
+    #[tokio::test]
+    async fn signs_in_with_google() {
+        let Some(server) = opensmith_cloud_server::Config::from_env().filter(|c| c.firestore_emulator.is_some() && c.auth_emulator) else {
+            eprintln!("skipped: run under `firebase emulators:exec` (see two_macs_share_a_career's comment)");
+            return;
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = opensmith_cloud_server::router(opensmith_cloud_server::AppState::new(&server));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = Config { key: "demo".into(), server: url, auth_emulator: std::env::var("FIREBASE_AUTH_EMULATOR_HOST").ok() };
+        let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let token = json!({ "sub": format!("g{n}"), "email": format!("g{n}@gmail.com"), "email_verified": true, "name": "Zoé G", "picture": "https://example.com/zoe.png" }).to_string();
+        let keychain = Arc::new(Memory::default());
+        let mac = Cloud::new(Some(config.clone()), Box::new(keychain.clone()));
+        let status = mac.sign_in_idp(&token).await.unwrap();
+        assert_eq!((status.photo.as_deref(), status.name.as_deref(), status.verified), (Some("https://example.com/zoe.png"), Some("Zoé G"), Some(true)));
+        assert!(matches!(mac.push("career", json!({ "act": 1 }), 0).await, Ok(Pushed::Saved(_))));
+        // Launched again: the picture is kept with the sign-in.
+        let again = Cloud::new(Some(config), Box::new(keychain));
+        assert_eq!(again.status().await.photo.as_deref(), Some("https://example.com/zoe.png"));
     }
 
     /// The link of the e-mail clicked (the Auth emulator's own admin call).
