@@ -306,7 +306,9 @@ const cloud =
         tauriCloud,
         localStorage,
         {
-          career: { 'opensmith.career': storagePart(localStorage, 'opensmith.career') },
+          // The career as the app keeps it: in career.json beside the library (the window's
+          // storage only held it before that, and is empty on a desktop app since).
+          career: { 'opensmith.career': { read: () => engine.career.load(), write: (v) => engine.career.save(v as Career) } },
           progress: {
             'opensmith.progress': { read: () => engine.progress.load(), write: (v) => engine.progress.save(v as Progress) },
             'opensmith.lessons': storagePart(localStorage, 'opensmith.lessons'),
