@@ -133,9 +133,14 @@ export class DemoEngine implements Engine {
     return song.cover ? this.root + song.cover.split('/').map(encodeURIComponent).join('/') : null;
   }
 
+  private index = { text: '', songs: [] as SongEntry[] };
+
   async library(): Promise<SongEntry[]> {
     const r = await fetch(this.root + 'index.json');
-    return r.ok ? ((await r.json()) as SongEntry[]) : [];
+    if (!r.ok) return [];
+    const text = await r.text();
+    if (text !== this.index.text) this.index = { text, songs: JSON.parse(text) as SongEntry[] };
+    return this.index.songs;
   }
 
   async load(id: string, levels: Record<string, number> = {}): Promise<Chart> {

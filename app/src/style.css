@@ -426,10 +426,11 @@ body {
   }
 }
 
+/* No scale: a screen full of text would be redrawn at each frame of it. */
 @keyframes panel-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.985);
+    transform: translateY(10px);
   }
 }
 
@@ -1595,6 +1596,9 @@ body.live .live-tools {
 .song-tile {
   display: flex;
   flex-direction: column;
+  /* Off screen, a tile is neither laid out nor painted (a library holds a thousand). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
   border-radius: 14px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
@@ -4719,4 +4723,36 @@ body:not(.live) .live-only {
 .cloud-ask p {
   margin: 0 0 16px;
   color: var(--muted);
+}
+
+/* Response times (Shift+P): over everything, never in the way. */
+.perf-panel {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 10000;
+  width: 380px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(4, 6, 12, 0.88);
+  font: 11px/1.45 ui-monospace, Menlo, monospace;
+  white-space: pre;
+  pointer-events: none;
+}
+.perf-head {
+  margin-bottom: 4px;
+  color: #9aa4b5;
+}
+.perf-row {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-row.ok {
+  color: #6ee7a0;
+}
+.perf-row.slow {
+  color: #fbbf24;
+}
+.perf-row.bad {
+  color: #f87171;
 }

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use lewton::inside_ogg::OggStreamReader;
 use opensmith_audio::Track;
-use opensmith_dsp::fx::resample::resample;
+use opensmith_dsp::fx::resample::resample_fast;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TrackError {
@@ -23,8 +23,13 @@ pub fn load_track(path: &Path, sample_rate: u32) -> Result<Track, TrackError> {
 
 /// A backing track with the song's own guitar as a stem (`guitar`), silent until its gain is set.
 pub fn load_track_with_stem(path: &Path, guitar: &Path, sample_rate: u32) -> Result<Track, TrackError> {
-    let (data, channels) = decode(guitar, sample_rate)?;
-    Ok(load_track(path, sample_rate)?.with_stem(&data, channels))
+    // Both decoded at once, each on its own core.
+    let (track, stem) = std::thread::scope(|scope| {
+        let stem = scope.spawn(|| decode(guitar, sample_rate));
+        (load_track(path, sample_rate), stem.join())
+    });
+    let (data, channels) = stem.unwrap_or_else(|e| std::panic::resume_unwind(e))?;
+    Ok(track?.with_stem(&data, channels))
 }
 
 /// `seconds` of a recording from `start` s, its channels mixed to one, at the file's own rate
@@ -111,7 +116,7 @@ fn decode(path: &Path, sample_rate: u32) -> Result<(Vec<f32>, usize), TrackError
     let resampled: Vec<Vec<f32>> = (0..kept)
         .map(|c| {
             let x: Vec<f32> = data.iter().skip(c).step_by(channels).copied().collect();
-            resample(&x, rate as f32, sample_rate as f32, 16)
+            resample_fast(&x, rate as f32, sample_rate as f32, 16)
         })
         .collect();
     let frames = resampled.iter().map(Vec::len).min().unwrap_or(0);

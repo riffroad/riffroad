@@ -53,6 +53,8 @@ export interface AudioStatus {
   library: string;
   autoplay: string | null;
   autoimport: string | null;
+  /** Click through the menus and time them (`OPENSMITH_TOUR`: 1, or menu actions; development). */
+  tour: string | null;
 }
 
 export const isTauri = (): boolean => '__TAURI_INTERNALS__' in window;
@@ -89,8 +91,12 @@ export class TauriEngine implements Engine {
 
   unlock(): void {}
 
-  library(): Promise<SongEntry[]> {
-    return invoke<SongEntry[]>('library');
+  private index: { version: string | null; songs: SongEntry[] } = { version: null, songs: [] };
+
+  async library(): Promise<SongEntry[]> {
+    const read = await invoke<{ version: string; songs: SongEntry[] | null }>('library', { known: this.index.version });
+    if (read.songs) this.index = { version: read.version, songs: read.songs };
+    return this.index.songs;
   }
 
   coverUrl(song: SongEntry): Promise<string | null> {
@@ -108,6 +114,11 @@ export class TauriEngine implements Engine {
 
   status(): Promise<AudioStatus> {
     return invoke<AudioStatus>('audio_status');
+  }
+
+  /** A timing of the interface (Shift+P), into the app's log. */
+  perfLog(line: string): void {
+    void invoke('perf_log', { line });
   }
 
   /** How the guitar stays tuned between songs (null: retuned for each song). */

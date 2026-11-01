@@ -285,4 +285,13 @@ export const MAIN: Record<string, string> = {
   'ce fichier n\'est pas un chart Riffroad': 'this file is not a Riffroad chart',
   'version de chart non gérée : {version}': 'unsupported chart version: {version}',
   '{cable} branché : Riffroad écoute ta guitare.': '{cable} plugged in: Riffroad is listening to your guitar.',
+  // Response times (Shift+P)
+  'Temps de réponse · {fps} images/s · Maj+P': 'Response times · {fps} fps · Shift+P',
+  'saccade': 'hitch',
+  'étape': 'step',
+  'jusqu’à la musique': 'until the music',
+  'chargement du morceau': 'song loading',
+  'piste de notes': 'note highway',
+  'grille des morceaux': 'song grid',
+  'relecture de la bibliothèque': 'library re-read',
 };

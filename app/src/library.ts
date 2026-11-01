@@ -143,6 +143,25 @@ const TEMPLATE = `
 <aside class="song-card" data-el="card" hidden></aside>`;
 
 /** The song library: search, sort and filters over a grid of covers; a card for the chosen song. */
+let tileTemplate: HTMLElement | null = null;
+function blankTile(): HTMLElement {
+  if (tileTemplate) return tileTemplate;
+  tileTemplate = document.createElement('div');
+  tileTemplate.className = 'song-tile';
+  tileTemplate.tabIndex = 0;
+  tileTemplate.innerHTML = `
+      <div class="tile-art"><span class="tile-source"></span></div>
+      <div class="tile-body">
+        <div class="t"></div>
+        <div class="a"></div>
+        <div class="tile-meta"><span class="badge"></span><span class="len"></span></div>
+        <div class="tile-parts" hidden></div>
+        <div class="mastery"><i></i></div>
+        <div class="mastery-text"></div>
+      </div>`;
+  return tileTemplate;
+}
+
 export class Library {
   private readonly el: Record<string, HTMLElement> = {};
   private songs: SongEntry[] = [];
@@ -315,20 +334,9 @@ export class Library {
   private tile(song: SongEntry): HTMLElement {
     const p = this.progress[song.id];
     const source = sourceOf(song);
-    const tile = document.createElement('div');
-    tile.className = 'song-tile';
-    tile.tabIndex = 0;
+    // A copy of the one tile parsed once: a big library has a thousand of them.
+    const tile = blankTile().cloneNode(true) as HTMLElement;
     tile.dataset.id = song.id;
-    tile.innerHTML = `
-      <div class="tile-art"><span class="tile-source"></span></div>
-      <div class="tile-body">
-        <div class="t"></div>
-        <div class="a"></div>
-        <div class="tile-meta"><span class="badge"></span><span class="len"></span></div>
-        <div class="tile-parts" hidden></div>
-        <div class="mastery"><i></i></div>
-        <div class="mastery-text"></div>
-      </div>`;
     const art = tile.querySelector('.tile-art')!;
     art.prepend(coverElement(song.title, song.artist, () => this.hooks.coverUrl(song), 'tile-cover'));
     const badge = tile.querySelector<HTMLElement>('.tile-source')!;

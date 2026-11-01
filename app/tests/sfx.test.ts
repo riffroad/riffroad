@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Chart } from '../src/chart';
+import { leadIn, type Chart } from '../src/chart';
 import { countIn, SoundBoard, type SoundOut } from '../src/sfx';
 import type { SoundName } from '../src/sounds';
 
@@ -13,6 +13,22 @@ function board() {
   const clock = { t: 0 };
   return { b: new SoundBoard(out, () => clock.t), played, beds, clock };
 }
+
+describe('lead-in', () => {
+  const song = (notes: number[], chords: number[] = []) => ({ notes: notes.map((time) => ({ time })), chords: chords.map((time) => ({ time })) }) as unknown as Chart;
+
+  it('starts on the music when the guitar comes in later than the highway shows', () => {
+    expect(leadIn(song([12, 14]), 3, 3)).toBe(0);
+    expect(leadIn(song([4.5]), 3, 3)).toBe(0);
+  });
+
+  it('waits only what the first note needs to come from the far end, chords counted', () => {
+    expect(leadIn(song([3]), 3, 3)).toBe(1);
+    expect(leadIn(song([20], [2.5]), 3, 3)).toBe(1.5);
+    expect(leadIn(song([0.2]), 3, 3)).toBe(3);
+    expect(leadIn(song([]), 3, 3)).toBe(0);
+  });
+});
 
 describe('sound board', () => {
   it('counts in on the song’s own beat, into its first one', () => {

@@ -34,6 +34,8 @@ pub fn resample(x: &[f32], from_hz: f32, to_hz: f32, zeros: usize) -> Vec<f32> {
 
 /// Kernel positions tabulated per input sample by `resample_fast`.
 const PHASES: usize = 512;
+/// Output samples from which `resample_fast` shares the work among threads (a second at 48 kHz).
+const PARALLEL_FROM: usize = 48_000;
 
 /// `resample`, with its kernel tabulated (`PHASES` points per input sample, linearly
 /// interpolated): the same output to about 1e-5, fast enough for whole songs.
@@ -57,9 +59,7 @@ pub fn resample_fast(x: &[f32], from_hz: f32, to_hz: f32, zeros: usize) -> Vec<f
             (cutoff * sinc * window) as f32
         })
         .collect();
-    let out_len = (x.len() as f64 * ratio).ceil() as usize;
-    let mut out = Vec::with_capacity(out_len);
-    for n in 0..out_len {
+    let sample = |n: usize| -> f32 {
         let t = n as f64 / ratio;
         let first = (t - half).ceil().max(0.0) as usize;
         let last = ((t + half).floor() as usize).min(x.len() - 1);
@@ -70,8 +70,18 @@ pub fn resample_fast(x: &[f32], from_hz: f32, to_hz: f32, zeros: usize) -> Vec<f
             let frac = (at - i as f64) as f32;
             acc += v * (table[i] + (table[i + 1] - table[i]) * frac);
         }
-        out.push(acc);
-    }
+        acc
+    };
+    let mut out = vec![0.0f32; (x.len() as f64 * ratio).ceil() as usize];
+    // Each output sample is a sum of its own: a song is shared among the cores.
+    let cores = if out.len() < PARALLEL_FROM { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) };
+    let chunk = out.len().div_ceil(cores).max(1);
+    std::thread::scope(|scope| {
+        for (c, part) in out.chunks_mut(chunk).enumerate() {
+            let sample = &sample;
+            scope.spawn(move || part.iter_mut().enumerate().for_each(|(j, o)| *o = sample(c * chunk + j)));
+        }
+    });
     out
 }
 
@@ -94,6 +104,16 @@ mod tests {
             let worst = slow.iter().zip(&fast).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
             assert!(worst < 1e-4, "{from} → {to}: {worst}");
         }
+    }
+
+    #[test]
+    fn a_long_signal_shared_among_threads_gives_the_same_output() {
+        // Past PARALLEL_FROM output samples: computed in chunks, joined where they meet.
+        let x: Vec<f32> = (0..60_000).map(|i| (i as f32 * 0.0173).sin() * (i as f32 * 0.00031).cos()).collect();
+        let (slow, fast) = (resample(&x, 44_100.0, 48_000.0, 16), resample_fast(&x, 44_100.0, 48_000.0, 16));
+        assert_eq!(slow.len(), fast.len());
+        let worst = slow.iter().zip(&fast).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "{worst}");
     }
 
     #[test]

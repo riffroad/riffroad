@@ -76,6 +76,7 @@ export interface Engine {
   unlock(): void;
   /** Where scores and learnt levels are kept. */
   readonly progress: ProgressStore;
+  /** The songs; the same array as the last call's when nothing changed. */
   library(): Promise<SongEntry[]>;
   /** `levels`: the level each phrase (by name) starts at, from earlier sessions. */
   load(id: string, levels?: Record<string, number>): Promise<Chart>;

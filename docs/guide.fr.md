@@ -134,6 +134,12 @@ npm run dev
 
 Puis ouvrir http://localhost:1420. Les morceaux sont ceux de `out/` (créés par `opensmith-ingest`) ; `OPENSMITH_LIBRARY=/chemin` pour un autre dossier.
 
+**Temps de réponse** : Maj+P (ou `?perf` dans l'adresse) affiche le temps de chaque clic jusqu'à l'image qui le montre, les étapes du lancement d'un morceau et les images en retard. L'app de bureau les écrit aussi dans son journal (`perf : …`) ; `OPENSMITH_TOUR=1` lui fait parcourir les menus deux fois puis lancer le premier morceau, fenêtre au premier plan (`OPENSMITH_TOUR=open-library,open-trophies` pour quelques écrans seulement) :
+
+```bash
+open -n --stderr /tmp/tour.log --env OPENSMITH_TOUR=1 app/src-tauri/target/release/bundle/macos/Riffroad.app
+```
+
 **Menu d'accueil** : Reprendre (le dernier morceau joué), Morceaux, Importer un morceau, Loop Trainer, Jouer librement, Accordeur, Réglages (onglets Audio & guitare, Latence & calibrage, Jeu).
 
 **HUD matériel** (en haut à droite des menus) : l'entrée écoutée, son état et la latence mesurée, un vumètre en direct, l'interrupteur Guitare réelle / Démo auto (le jeu joue tout seul, sans compter dans la progression) et le Tuner.

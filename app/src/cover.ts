@@ -39,6 +39,8 @@ export function coverElement(
     if (!src) return;
     const img = document.createElement('img');
     img.alt = '';
+    // Decoded off the main thread: a library opening shows dozens at once.
+    img.decoding = 'async';
     img.src = src;
     img.onload = () => {
       box.classList.remove('placeholder');

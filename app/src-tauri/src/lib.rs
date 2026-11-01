@@ -7,6 +7,7 @@ mod cloud;
 mod import;
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -131,6 +132,8 @@ struct AudioStatus {
     autoplay: Option<String>,
     /// File to convert right away (`OPENSMITH_IMPORT`, development).
     autoimport: Option<String>,
+    /// Click through the menus and time them (`OPENSMITH_TOUR`: 1, or menu actions; development).
+    tour: Option<String>,
 }
 
 /// A song file of the music folder, and its chart once converted.
@@ -376,12 +379,30 @@ async fn cloud_delete_account(cloud: State<'_, cloud::Cloud>) -> Result<(), Stri
     cloud.delete_account().await.map_err(|e| e.code())
 }
 
+/// The library as read now, under a version (a hash of its list); its songs only when that
+/// version is not the one the page already holds (`known`): a thousand songs weigh 2 MB to parse.
+#[derive(Serialize)]
+struct LibraryRead {
+    version: String,
+    songs: Option<Vec<SongEntry>>,
+}
+
 #[tauri::command]
-async fn library(app: State<'_, App>) -> Result<Vec<SongEntry>, String> {
+async fn library(app: State<'_, App>, known: Option<String>) -> Result<LibraryRead, String> {
     let (root, charts) = (app.library.clone(), app.charts.clone());
-    let songs = tauri::async_runtime::spawn_blocking(move || Index::of(&root, &charts).songs).await.map_err(|e| e.to_string())?;
-    eprintln!("bibliothèque : {} morceau(x) dans {}", songs.len(), app.library.display());
-    Ok(songs)
+    let (songs, version) = tauri::async_runtime::spawn_blocking(move || {
+        let songs = Index::of(&root, &charts).songs;
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(&songs).unwrap_or_default().hash(&mut hash);
+        (songs, format!("{:016x}", hash.finish()))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let fresh = known.as_deref() != Some(&version);
+    if fresh {
+        eprintln!("bibliothèque : {} morceau(x) dans {}", songs.len(), app.library.display());
+    }
+    Ok(LibraryRead { version, songs: fresh.then_some(songs) })
 }
 
 /// Files dropped on the window: songs and tabs are queued for conversion, folders returned
@@ -908,6 +929,12 @@ fn calibrate_latency(app: State<'_, App>) {
     app.session.send(Command::Calibrate);
 }
 
+/// A timing of the interface (how long a click took to show), into the log.
+#[tauri::command]
+fn perf_log(line: String) {
+    eprintln!("perf : {line}");
+}
+
 #[tauri::command]
 fn audio_status(app: State<'_, App>) -> AudioStatus {
     let info = app.session.info();
@@ -923,6 +950,7 @@ fn audio_status(app: State<'_, App>) -> AudioStatus {
         library: app.library.display().to_string(),
         autoplay: std::env::var("OPENSMITH_AUTOPLAY").ok(),
         autoimport: std::env::var("OPENSMITH_IMPORT").ok(),
+        tour: std::env::var("OPENSMITH_TOUR").ok(),
     }
 }
 
@@ -1061,6 +1089,7 @@ pub fn run() {
             set_riff,
             poll,
             audio_status,
+            perf_log,
             import_paths,
             imports,
             import_folder,
@@ -1156,6 +1185,40 @@ mod tests {
             let t = std::time::Instant::now();
             let (preview, rate) = preview_of(&Path::new(&root).join(&song.id)).unwrap();
             eprintln!("preview of {}: {:.1} s of sound in {:.3} s", song.title, preview.len() as f64 / f64::from(rate), t.elapsed().as_secs_f64());
+        }
+    }
+
+    #[test]
+    #[ignore = "times the loading of songs of the music folder in OPENSMITH_TIME_LIBRARY"]
+    fn song_load_time() {
+        let Ok(root) = std::env::var("OPENSMITH_TIME_LIBRARY") else { return };
+        let songs = Index::of(Path::new(&root), &Charts::default()).songs;
+        let step = (songs.len() / 8).max(1);
+        let shipped = songs.iter().filter(|s| s.id.ends_with("song_chart.json") && Path::new(&root).join(&s.id).with_file_name("backing.ogg").is_file());
+        for song in songs.iter().filter(|s| s.has_audio).step_by(step).take(8).chain(shipped) {
+            let path = Path::new(&root).join(&song.id);
+            let t = std::time::Instant::now();
+            let mut chart = Chart::from_json(&fs::read_to_string(&path).unwrap()).unwrap();
+            let read = t.elapsed().as_secs_f64();
+            let backing = path.with_file_name(chart.audio.backing.as_ref().or(chart.audio.mix.as_ref()).unwrap());
+            let track = match chart.audio.guitar.as_ref().map(|g| path.with_file_name(g)).filter(|g| g.is_file()) {
+                Some(guitar) => load_track_with_stem(&backing, &guitar, 48_000).unwrap(),
+                None => load_track(&backing, 48_000).unwrap(),
+            };
+            let decoded = t.elapsed().as_secs_f64();
+            let shift = chart.retune_to(&[40, 45, 50, 55, 59, 64], "E Standard");
+            let _ = shift.map(|s| track.transposed(s, 48_000.0));
+            let total = t.elapsed().as_secs_f64();
+            eprintln!(
+                "{:<40} {:>5.0} s of audio: chart {:.3} s, decode {:.3} s, transpose {} {:.3} s, total {:.3} s",
+                song.title.chars().take(40).collect::<String>(),
+                track.frames() as f64 / 48_000.0,
+                read,
+                decoded - read,
+                shift.map_or("—".into(), |s| format!("{s:+.2}")),
+                total - decoded,
+                total,
+            );
         }
     }
 

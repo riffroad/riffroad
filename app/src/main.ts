@@ -9,7 +9,7 @@ import '@fontsource/jetbrains-mono/latin-600.css';
 import './theme.css';
 import { hardwareControls } from './ui/controls';
 import { cableToTake, HwHud } from './hw-hud';
-import { formatTime, phraseIndexAt, startLevelFor, type Chart } from './chart';
+import { formatTime, leadIn, phraseIndexAt, startLevelFor, type Chart } from './chart';
 import { coverElement } from './cover';
 import { DemoEngine } from './engine/demo';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -87,11 +87,15 @@ import { CareerScreen } from './career/screen';
 import { AccountPanel, askWhichSave, tauriCloud } from './account';
 import { CloudSync, storagePart } from './cloud';
 import { lang, LANGS, localize, setLang, t, tn, type Lang } from './i18n';
+import { Perf, tour } from './perf';
 
 // The page's own text (index.html, written in French) in the interface language, before anything reads it.
 localize();
 
+/** Silence before the music, at most (the lessons always: their count-in is part of them). */
 const LEAD_IN = 3;
+/** The lead-in of the song being played (s). */
+let lead = LEAD_IN;
 /** Numbers grouped the way the interface language writes them. */
 const NUMBERS = lang() === 'en' ? 'en-US' : 'fr-FR';
 const STORAGE = 'opensmith.settings';
@@ -185,7 +189,11 @@ function makeSounds(): void {
     console.warn('sons indisponibles', e);
   }
 }
-const highway = new Highway($('stage'), { invertStrings: settings.invertStrings, speed: settings.speed, lookahead: 3 });
+const perf = new Perf(document);
+if (engine instanceof TauriEngine) perf.sink = (line) => engine.perfLog(line);
+/** Seconds of song the highway shows ahead. */
+const LOOKAHEAD = 3;
+const highway = new Highway($('stage'), { invertStrings: settings.invertStrings, speed: settings.speed, lookahead: LOOKAHEAD });
 // Selects, checkboxes and sliders, everywhere, dressed as stage hardware.
 hardwareControls();
 const hud = new Hud($('hud'));
@@ -1031,6 +1039,12 @@ async function showAudioStatus(): Promise<void> {
   for (let i = 0; i < 50; i++) {
     const s = await engine.status();
     audio = s;
+    // The menus are timed with or without a sound card.
+    if (i === 0 && s.tour) {
+      // In front: a window out of sight draws nothing, so nothing to time.
+      void getCurrentWindow().show().then(() => getCurrentWindow().setFocus());
+      void tour(document, s.tour === '1' ? [] : s.tour.split(','));
+    }
     if (s.error) {
       describeAudio(s);
       return;
@@ -1089,12 +1103,16 @@ const library = new Library($('library'), {
 async function openLibrary(purpose: LibraryPurpose): Promise<void> {
   libraryPurpose = purpose;
   setMode('library');
+  const grid = perf.step(t('grille des morceaux'));
   library.show(songs, progress, purpose);
+  grid();
   // Read again for songs added or changed outside the app; the grid is redrawn only if there are
-  // (a song being clicked keeps its place and its card).
-  const before = JSON.stringify(songs);
+  // (a song being clicked keeps its place and its card). Unchanged, the engine gives the same list.
+  const before = songs;
+  const read = perf.step(t('relecture de la bibliothèque'));
   await loadLibrary();
-  if (mode === 'library' && JSON.stringify(songs) !== before) library.refresh(songs, progress);
+  read();
+  if (mode === 'library' && songs !== before) library.refresh(songs, progress);
 }
 
 /** The last song played (in whichever arrangement), to pick up where the player left. */
@@ -1197,9 +1215,13 @@ async function start(id: string, riffOpening = false): Promise<void> {
   const song = current;
   const shown = window.setTimeout(() => showLoading(song), 150);
   if (engine instanceof TauriEngine) engine.guitar = guitarFor(settings.guitarTuning, guitarTuned);
+  untilMusic = perf.step(t('jusqu’à la musique'));
+  const loaded = perf.step(t('chargement du morceau'));
   try {
     chart = await engine.load(id, progress[id]?.levels);
+    loaded();
   } catch (e) {
+    untilMusic = null;
     library.status(t('Impossible d’ouvrir ce morceau : {error}', { error: (e as Error).message }), true);
     sfx.ui('error');
     return;
@@ -1219,7 +1241,9 @@ async function start(id: string, riffOpening = false): Promise<void> {
   }
   heldTuning = chart.arrangement.tuning.strings;
   view = new GameView(chart);
+  const built = perf.step(t('piste de notes'));
   highway.setChart(chart);
+  built();
   if (gig) {
     const venue = gig.offer.venue.name;
     hud.setGig(gig.encore ? t('{venue} · rappel', { venue }) : t('{venue} · morceau {n} sur {total}', { venue, n: gig.index + 1, total: gig.setlist.length }));
@@ -1754,9 +1778,10 @@ function restart(): void {
   attack?.reset();
   attackHud.show(attack);
   applyMaster();
-  engine.seek(-LEAD_IN);
+  lead = lessonRun === null && drillRun === null ? leadIn(chart, LOOKAHEAD, LEAD_IN) : LEAD_IN;
+  engine.seek(-lead);
   engine.play();
-  sfx.countIn(chart, -LEAD_IN);
+  sfx.countIn(chart, -lead);
   setMode('play');
 }
 
@@ -1777,7 +1802,7 @@ function togglePause(): void {
 
 function seekBy(delta: number): void {
   if (!chart || riff || attack || (mode !== 'play' && mode !== 'pause')) return;
-  engine.seek(Math.max(-LEAD_IN, Math.min(chart.meta.duration, songTime + delta)));
+  engine.seek(Math.max(-lead, Math.min(chart.meta.duration, songTime + delta)));
 }
 
 function toLibrary(): void {
@@ -2169,6 +2194,10 @@ document.addEventListener('click', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (e.key === 'P' && e.shiftKey) {
+    perf.toggle();
+    return;
+  }
   if (e.key === '?') {
     toggleHelp();
     return;
@@ -2263,16 +2292,25 @@ window.addEventListener('keydown', (e) => {
 const GAME_EVENTS = new Set(['reset', 'expected', 'hit', 'miss', 'late', 'phrase', 'score', 'pass', 'end']);
 
 let last = performance.now();
+/** From a song's start to its music (its first frame at song time 0 or later). */
+let untilMusic: (() => void) | null = null;
 function frame(ms: number): void {
   const dt = Math.min(0.1, Math.max(0, (ms - last) / 1000));
   last = ms;
+  perf.frame(ms);
+  const t0 = performance.now();
   const f = engine.frame(ms);
+  const t1 = performance.now();
   if (!hwHud.hidden) hwHud.level(f.peak, ms);
   if (tuner.visible) tuner.feed(f.events, ms);
   if (guitarSettings.visible) guitarSettings.feed(f, ms);
   if (ampPanel.visible) ampPanel.feed(f, ms);
   if (chart && view) {
     songTime = f.time;
+    if (untilMusic && songTime >= 0) {
+      untilMusic();
+      untilMusic = null;
+    }
     if (backlog.length) {
       view.apply(backlog, f.time);
       backlog = [];
@@ -2327,6 +2365,8 @@ function frame(ms: number): void {
     highway.listen(f.peak, dt);
     highway.render(0, null, dt);
   }
+  const t2 = performance.now();
+  perf.worked({ moteur: t1 - t0, image: t2 - t1 });
   requestAnimationFrame(frame);
 }
 
@@ -2402,4 +2442,4 @@ void progressLoaded.then(loadLibrary).then(() => {
   if (song) void start(song);
 });
 
-Object.assign(window, { opensmith: { engine, highway, welcome: openWelcome, get view() { return view; }, get time() { return songTime; } } });
+Object.assign(window, { opensmith: { engine, highway, perf, welcome: openWelcome, get view() { return view; }, get time() { return songTime; } } });

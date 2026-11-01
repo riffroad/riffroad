@@ -115,6 +115,18 @@ export function parseChart(json: unknown): Chart {
   return c;
 }
 
+/**
+ * Seconds of silence before a song's music (at most `most`): only what the first note needs to come
+ * from the far end of the highway (`lookahead` s ahead) with a second to spare. A song whose
+ * guitar comes in later starts on its music at once.
+ */
+export function leadIn(chart: Pick<Chart, 'notes' | 'chords'>, lookahead: number, most: number): number {
+  let first = Infinity;
+  for (const n of chart.notes) first = Math.min(first, n.time);
+  for (const c of chart.chords) first = Math.min(first, c.time);
+  return Math.min(most, Math.max(0, lookahead + 1 - first));
+}
+
 export function pitch(chart: Chart, string: number, fret: number): number {
   return chart.arrangement.tuning.strings[string] + fret;
 }
