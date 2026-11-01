@@ -30,6 +30,15 @@ CHANGE = 0.2
 QUIET = 0.15
 # A strum's notes last this share of the beat (no sustain trail: the next strum follows).
 STRUM = 0.25
+# A strike of the guitar (note starts within GROUP s of each other, their loudness summed) at least
+# STRIKE times the song's usual strike, within OFFBEAT s of the middle of a beat, strums that
+# beat's chord again on the off-beat eighth (levels 3 and 4). Measured against the hand-written
+# rhythm charts of 96 songs (an attack within 50 ms): one strum per beat finds 47 % of the strums
+# written, 71 % of its own being right (F1 0.57); with the off-beats heard, 78 % at 69 % (F1 0.73;
+# 0.53 → 0.71 on the other half). Every note start, or every eighth of a busy bar, does worse.
+GROUP = 0.035
+STRIKE = 0.5
+OFFBEAT = 0.05
 # A chord whose root margin (`root_margins`) is below this is strummed muted: the beat's own
 # notes point to another chord, which the song's flow overruled. Measured on 97 hand-charted
 # songs, such beats are wrong half the time; muted (8 % of the beats), wrong chords go from 19.5
@@ -143,6 +152,32 @@ def root_margins(notes: list[RawNote], beats: list[float], chords: list[tuple[in
     return out
 
 
+def strikes(notes: list[RawNote]) -> np.ndarray:
+    """When the guitar is struck: note starts within GROUP s of one another make one strike,
+    loud enough (STRIKE times the song's usual strike)."""
+    out: list[list[float]] = []
+    for start, loud in sorted((n.start, n.amplitude) for n in notes):
+        if out and start - out[-1][0] <= GROUP:
+            out[-1][1] += loud
+        else:
+            out.append([start, loud])
+    if not out:
+        return np.zeros(0)
+    usual = float(np.median([a for _, a in out]))
+    return np.array([t for t, a in out if a >= STRIKE * usual])
+
+
+def offbeats(notes: list[RawNote], beats: list[float], chords: list[tuple[int, str] | None]) -> list[bool]:
+    """For each beat with a chord, whether the guitar strikes again near its middle (OFFBEAT)."""
+    heard = strikes(notes)
+    out = []
+    for i, chord in enumerate(chords):
+        mid = (beats[i] + beats[i + 1]) / 2
+        k = int(np.searchsorted(heard, mid))
+        out.append(chord is not None and any(0 <= j < len(heard) and abs(heard[j] - mid) <= OFFBEAT for j in (k - 1, k)))
+    return out
+
+
 def _place(intervals: tuple[int | None, ...], root: int, tuning: Tuning, lowest: int) -> tuple[int, ...] | None:
     """Frets of `intervals` with the root pitch class `root` at fret `lowest` or above on its
     string (the shape's first played string), in `tuning` above its capo; None off the neck."""
@@ -217,19 +252,27 @@ def ladder(root: int, quality: str, tuning: Tuning = Tuning()) -> list[tuple[int
     return [form for k, form in enumerate(forms) if k + 1 == len(forms) or forms[k + 1][1] != form[1]]
 
 
-def strums(chords: list[tuple[int, str] | None], beats: list[float], tuning: Tuning = Tuning(), muted: list[bool] | None = None) -> list[Fingered]:
-    """A strum of each beat's chord on the beat, fingered as `shape` says, with its easier forms
-    (`ladder`) for the easy levels; muted on the beats `muted` says."""
+def strums(
+    chords: list[tuple[int, str] | None],
+    beats: list[float],
+    tuning: Tuning = Tuning(),
+    muted: list[bool] | None = None,
+    offbeat: list[bool] | None = None,
+) -> list[Fingered]:
+    """A strum of each beat's chord on the beat, and on its off-beat eighth where `offbeat` says,
+    fingered as `shape` says, with its easier forms (`ladder`) for the easy levels; muted on the
+    beats `muted` says."""
     out = []
     for i, chord in enumerate(chords):
         if chord is None:
             continue
-        t, length = beats[i], (beats[i + 1] - beats[i]) * STRUM
+        length = (beats[i + 1] - beats[i]) * STRUM
         mute = bool(muted and muted[i])
-        forms = [(top, _strum(t, length, frets, tuning, mute)) for top, frets in ladder(*chord, tuning)]
-        whole = forms[-1][1]
-        whole.ladder = forms
-        out.append(whole)
+        for t in [beats[i], (beats[i] + beats[i + 1]) / 2][: 2 if offbeat and offbeat[i] else 1]:
+            forms = [(top, _strum(t, length, frets, tuning, mute)) for top, frets in ladder(*chord, tuning)]
+            whole = forms[-1][1]
+            whole.ladder = forms
+            out.append(whole)
     return out
 
 
@@ -248,7 +291,7 @@ def build_chord_chart(
     """The "Chords" arrangement of a recording, from the notes heard on its guitar stem."""
     beats = [t for t in grid.beats if t <= duration]
     chords = recognise(notes, beats)
-    tab = strums(chords, beats, tuning, [m < DOUBT for m in root_margins(notes, beats, chords)])
+    tab = strums(chords, beats, tuning, [m < DOUBT for m in root_margins(notes, beats, chords)], offbeats(notes, beats, chords))
     return build_chart(
         None,
         grid,
@@ -278,21 +321,24 @@ def parse_chord(name: str) -> tuple[int, str] | None:
     return None
 
 
-def chords_of(chart: Chart) -> tuple[list[float], list[tuple[int, str] | None], list[bool]]:
-    """What a chord chart strums: its beats, the chord of each beat (None: a rest) and whether it
-    is muted, read from its whole chords (the highest level)."""
+def chords_of(chart: Chart) -> tuple[list[float], list[tuple[int, str] | None], list[bool], list[bool]]:
+    """What a chord chart strums: its beats, the chord of each beat (None: a rest), whether it is
+    muted and whether it is strummed again on its off-beat, read from its whole chords (the
+    highest level)."""
     beats = [b.time for b in chart.beats]
     whole = {round(c.time, 3): c for c in chart.chords if c.levels[1] == chart.max_difficulty}
     chords: list[tuple[int, str] | None] = []
     muted: list[bool] = []
-    for t in beats[:-1]:
+    offbeat: list[bool] = []
+    for t, after in zip(beats, beats[1:]):
         c = whole.get(round(t, 3))
         chord = parse_chord(chart.templates[c.template].name) if c else None
         if c and chord is None:
             raise ValueError(f"not a chord chart: {chart.templates[c.template].name} at {t:.2f} s")
         chords.append(chord)
         muted.append(bool(c and c.techniques.get("mute")))
-    return beats, chords, muted
+        offbeat.append(chord is not None and round((t + after) / 2, 3) in whole)
+    return beats, chords, muted, offbeat
 
 
 def rechord(chart: Chart, changes: dict[tuple[int, str], tuple[int, str]] | None = None) -> Chart:
@@ -300,7 +346,7 @@ def rechord(chart: Chart, changes: dict[tuple[int, str], tuple[int, str]] | None
     it gives everywhere (the player knows better: it is no longer muted), with today's levels.
     The recording, the song's details and its phrases' names stay."""
     changes = changes or {}
-    beats, chords, muted = chords_of(chart)
+    beats, chords, muted, offbeat = chords_of(chart)
     fixed = [changes.get(c, c) if c else None for c in chords]
     muted = [m and (c not in changes) for c, m in zip(chords, muted)]
     grid = BeatGrid.from_downbeats(beats, [b.time for b in chart.beats if b.bar is not None], chart.time_signature[0])
@@ -314,7 +360,7 @@ def rechord(chart: Chart, changes: dict[tuple[int, str], tuple[int, str]] | None
         source_kind=chart.source_kind,
         source_file=chart.source_file,
         arrangement_name=chart.arrangement_name,
-        tab=strums(fixed, beats, chart.tuning, muted),
+        tab=strums(fixed, beats, chart.tuning, muted, offbeat),
     )
     new.album, new.year = chart.album, chart.year
     new.audio_backing, new.audio_guitar, new.audio_mix, new.audio_offset = chart.audio_backing, chart.audio_guitar, chart.audio_mix, chart.audio_offset

@@ -4,7 +4,7 @@ import pytest
 
 from opensmith_ingest.builder import MAX_DIFFICULTY, BeatGrid
 from opensmith_ingest.chart import Chart
-from opensmith_ingest.chord_chart import build_chord_chart, ladder, recognise, root_margins, shape
+from opensmith_ingest.chord_chart import build_chord_chart, ladder, offbeats, recognise, root_margins, shape
 from opensmith_ingest.fingering import Tuning
 from opensmith_ingest.harmony import chord_name
 from opensmith_ingest.transcription import RawNote
@@ -77,6 +77,24 @@ def test_a_beat_whose_notes_say_another_chord_is_strummed_muted():
     assert [c.techniques.get("mute", False) for c in top] == [False] * 4 + [True] + [False] * 4
 
 
+def test_the_off_beats_the_guitar_strikes_are_strummed_from_level_3():
+    # C strummed on each beat, and again between beats 1-2 and 3-4 (an eighth later); G on beats.
+    notes = held([48, 52, 55, 60], 0, 4) + [RawNote(t, t + 0.2, p, 0.8) for t in (0.25, 1.25) for p in (48, 52, 55, 60)] + held([43, 47, 50, 55], 4, 4)
+    beats = [k * BEAT for k in range(9)]
+    chords = recognise(notes, beats)
+    assert offbeats(notes, beats, chords) == [True, False, True, False, False, False, False, False]
+    chart = build_chord_chart(notes, BeatGrid.regular(120.0, 4.0), title="Song", artist="Band", duration=4.0)
+    times = lambda level: [c.time for c in chart.events_at(level)[1]]  # noqa: E731
+    assert times(2) == [k * BEAT for k in range(8)]
+    assert times(3) == times(4) == sorted([k * BEAT for k in range(8)] + [0.25, 1.25])
+    # A chord fixed keeps its off-beats.
+    from opensmith_ingest.chord_chart import rechord
+
+    fixed = rechord(chart, {(C, "maj"): (A, "min")})
+    assert [c.time for c in fixed.events_at(4)[1]] == times(4)
+    assert {fixed.templates[c.template].name for c in fixed.events_at(4)[1] if c.time in (0.25, 1.25)} == {"Am"}
+
+
 def test_chords_are_recognised_beat_by_beat_and_rests_are_kept():
     # C for four beats, G for four, two silent beats, Am for four; a passing note in the C.
     notes = held([48, 52, 55, 60], 0, 4) + held([43, 47, 50, 55], 4, 4) + held([45, 52, 57, 60, 64], 10, 4)
@@ -123,13 +141,13 @@ def test_a_chord_fixed_by_the_player_is_replaced_everywhere(tmp_path):
     notes = held([48, 52, 55, 60], 0, 4) + held([48, 52, 57], 4, 1) + held([48, 52, 55, 60], 5, 3) + held([43, 47, 50, 55, 59, 67], 8, 8)
     chart = build_chord_chart(notes, BeatGrid.regular(120.0, 8.0), title="Song", artist="Band", duration=8.0)
     chart.audio_backing, chart.phrases[0].name = "backing.ogg", "riff"
-    beats, chords, muted = chords_of(chart)
+    beats, chords, muted, offbeat = chords_of(chart)
     assert chords == [(C, "maj")] * 8 + [(G, "maj")] * 8 and muted == [False] * 4 + [True] + [False] * 11
     # Read back as it was made; G replaced by E minor everywhere, the muted C named again by the player.
     again = rechord(chart)
-    assert chords_of(again) == (beats, chords, muted)
+    assert chords_of(again) == (beats, chords, muted, offbeat)
     fixed = rechord(chart, {(G, "maj"): (E, "min"), (C, "maj"): (C, "5")})
-    assert chords_of(fixed)[1:] == ([(C, "5")] * 8 + [(E, "min")] * 8, [False] * 16)
+    assert chords_of(fixed)[1:3] == ([(C, "5")] * 8 + [(E, "min")] * 8, [False] * 16)
     assert (fixed.audio_backing, fixed.phrases[0].name) == ("backing.ogg", "riff")
     # The same from the command line, on the file.
     path = tmp_path / "song_chart.chords.json"

@@ -282,7 +282,7 @@ def _run(args: argparse.Namespace, emit: Emit | None) -> None:
                 sys.exit(f"--set {change}: chords are named C, F#m, Bb5…")
             changes[a] = b
         chart = Chart.load(args.chart)
-        _, before, _ = chords_of(chart)
+        before = chords_of(chart)[1]
         rechord(chart, changes).save(args.out or args.chart)
         print(json.dumps({"changed": sum(1 for c in before if c in changes)}))
     elif args.cmd == "tab":
