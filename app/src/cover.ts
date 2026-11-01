@@ -45,8 +45,7 @@ export function coverElement(
     img.onload = () => {
       box.classList.remove('placeholder');
       box.replaceChildren(img);
-      // The gradient stays under the picture while it fades in (`.cover img`), then goes.
-      setTimeout(() => (box.style.background = ''), 220);
+      box.style.background = '';
     };
   };
   if (typeof url === 'function') whenSeen(box, () => void url().then(show));

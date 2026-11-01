@@ -246,6 +246,8 @@ export class Highway {
     shape: null as InlayShape | null,
   };
   private lastStreak = 0;
+  /** What the last frame's WebGL drawing cost the main thread (ms): the GPU's wait shows here. */
+  drawMs = 0;
   private fireworks = { until: 0, next: 0, intensity: 0 };
 
   constructor(
@@ -443,7 +445,9 @@ export class Highway {
     this.updateStrings(dt);
     this.updateFretNumbers();
     this.particles.update(dt, this.renderer.getDrawingBufferSize(this.size).y / (2 * Math.tan(THREE.MathUtils.degToRad(CAMERA.fov / 2))));
+    const draw = performance.now();
     this.composer.render(dt);
+    this.drawMs = performance.now() - draw;
   }
 
   private buildNeck(box: THREE.BoxGeometry): void {

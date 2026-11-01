@@ -1167,7 +1167,7 @@ async function showAudioStatus(): Promise<void> {
     if (i === 0 && s.tour) {
       // In front: a window out of sight draws nothing, so nothing to time.
       void getCurrentWindow().show().then(() => getCurrentWindow().setFocus());
-      void tour(document, s.tour === '1' ? [] : s.tour.split(','));
+      void tour(document, s.tour === '1' ? [] : s.tour.split(','), perf);
     }
     if (s.error) {
       describeAudio(s);
@@ -2554,7 +2554,7 @@ function frame(ms: number): void {
     highway.render(0, null, dt);
   }
   const t2 = performance.now();
-  perf.worked({ moteur: t1 - t0, image: t2 - t1 });
+  perf.worked({ moteur: t1 - t0, image: t2 - t1 }, { webgl: highway.drawMs });
   requestAnimationFrame(frame);
 }
 

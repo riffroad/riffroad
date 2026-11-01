@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EVERY_SONG, fold, partLabel, partsOf, phraseMastery, preferredPart, selectSongs, sourceOf, tuningsOf } from '../src/library';
+import { EVERY_SONG, FIRST_TILES, fold, partLabel, partsOf, phraseMastery, preferredPart, selectSongs, sourceOf, tileBatches, tuningsOf } from '../src/library';
 import { findSong, type SongEntry } from '../src/engine/types';
 import { emptyProgress, type Progress } from '../src/progress';
 
@@ -62,6 +62,16 @@ describe('library', () => {
       { name: 'C', label: 'Refrain', level: -1, levels: 5 },
       { name: 'Z', label: 'Phrase Z', level: -1, levels: 5 },
     ]);
+  });
+});
+
+describe('the grid of a big library', () => {
+  it('draws a screenful at once, then every other tile once, in order', () => {
+    expect(tileBatches(12)).toEqual([[0, 12]]);
+    const batches = tileBatches(1367);
+    expect(batches[0]).toEqual([0, FIRST_TILES]);
+    expect(batches.flatMap(([from, to]) => Array.from({ length: to - from }, (_, i) => from + i))).toEqual(Array.from({ length: 1367 }, (_, i) => i));
+    expect(tileBatches(500, 500)).toEqual([[0, 500]]);
   });
 });
 

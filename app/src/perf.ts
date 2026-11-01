@@ -36,14 +36,27 @@ export class Perf {
   private current = { label: '', at: -Infinity };
   private last = 0;
   private fps = { frames: 0, since: 0, value: 0 };
+  /** Since the last frame: the time the page took to lay out and paint it, and the events'. */
+  private since = { page: 0, events: 0 };
 
   constructor(doc: Document) {
     this.panel = doc.createElement('div');
     this.panel.className = 'perf-panel';
     this.panel.hidden = !this.saved();
     doc.body.append(this.panel);
-    doc.addEventListener('click', (e) => this.action(labelOf(e.target), e.timeStamp), true);
-    doc.addEventListener('keydown', (e) => this.action(`⌨ ${e.key}`, e.timeStamp), true);
+    // On the window: an event sent to it (the tour's Escape) never reaches the document.
+    const win = doc.defaultView ?? window;
+    win.addEventListener('click', (e) => this.action(labelOf(e.target), e.timeStamp), true);
+    win.addEventListener('keydown', (e) => this.action(`⌨ ${e.key}`, e.timeStamp), true);
+    for (const type of ['click', 'keydown', 'pointerdown', 'pointerup']) win.addEventListener(type, () => this.handling(), true);
+  }
+
+  /** An event's handlers, from its first listener to the task after (what they cost the frame). */
+  private handling(): void {
+    const start = performance.now();
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => (this.since.events += performance.now() - start);
+    channel.port2.postMessage(null);
   }
 
   get visible(): boolean {
@@ -77,17 +90,27 @@ export class Perf {
     return () => this.add({ label, ms: performance.now() - start, kind: 'step' });
   }
 
-  /** What the last frame's own work cost (ms), by part: a hitch says whether it was ours. */
-  private work = '';
+  /** What the last frame's own work cost (ms), by part, and inside those parts: a hitch says whether it was ours. */
+  private work: { parts: Record<string, number>; inside: Record<string, number> } = { parts: {}, inside: {} };
 
-  /** The parts of a frame's own work and their times, told after it (`parts`: label → ms). */
-  worked(parts: Record<string, number>): void {
-    this.work = Object.entries(parts)
-      .map(([k, v]) => `${k} ${Math.round(v)}`)
-      .join(', ');
+  /**
+   * The parts of a frame's own work and their times, told at its end (`parts`: label → ms;
+   * `inside`: shown, not added, being in a part already). The page's layout and paint of that
+   * frame come after: timed up to the task that follows.
+   */
+  worked(parts: Record<string, number>, inside: Record<string, number> = {}): void {
+    this.work = { parts, inside };
+    const end = performance.now();
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => (this.since.page += performance.now() - end);
+    channel.port2.postMessage(null);
   }
 
-  /** Each frame drawn (`ms`: its time): a late one is a hitch, put down to the last second's action. */
+  /**
+   * Each frame drawn (`ms`: its time): a late one is a hitch, put down to the last second's
+   * action, with where its time went: the last frame's work, the page's layout and paint, the
+   * events, and the rest (the main thread idle: the frame waited on the compositor or the GPU).
+   */
   frame(ms: number): void {
     const gap = ms - this.last;
     this.last = ms;
@@ -98,17 +121,28 @@ export class Perf {
     }
     if (gap > HITCH && gap < ASLEEP) {
       const label = ms - this.current.at < 1000 ? this.current.label : '';
-      this.add({ label: `${label} [${this.work}]`, ms: gap, kind: 'hitch' });
+      const parts = { ...this.work.parts, page: this.since.page, événements: this.since.events };
+      const rest = gap - Object.values(parts).reduce((sum, v) => sum + v, 0);
+      const split = Object.entries({ ...parts, ...this.work.inside, reste: rest })
+        .map(([k, v]) => `${k} ${Math.round(v)}`)
+        .join(', ');
+      this.add({ label: `${label} [${split}]`, ms: gap, kind: 'hitch' });
     }
+    this.since = { page: 0, events: 0 };
   }
 
   private add(e: Timing): void {
     this.entries.push(e);
     if (this.entries.length > KEEP) this.entries.shift();
-    const line = `${e.kind} ${Math.round(e.ms)} ms ${e.label}`;
-    console.debug(`[perf] ${line}`);
-    this.sink?.(line);
+    this.log(`${e.kind} ${Math.round(e.ms)} ms ${e.label}`);
     this.draw();
+  }
+
+  /** A line into the log, at its time (ms since the page opened). */
+  log(line: string): void {
+    const timed = `@${Math.round(performance.now())} ${line}`;
+    console.debug(`[perf] ${timed}`);
+    this.sink?.(timed);
   }
 
   private draw(): void {
@@ -142,10 +176,16 @@ const TOUR = ['open-lessons', 'open-career', 'open-trophies', 'open-library', 'o
  * Clicks through the menus as a player would, twice, then starts the library's first song: the
  * timings of the app itself (`OPENSMITH_TOUR=1`, or a list of menu actions, development), in its log.
  */
-export async function tour(doc: Document, only: readonly string[] = []): Promise<void> {
+export async function tour(doc: Document, only: readonly string[] = [], perf?: Perf): Promise<void> {
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  const back = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-  const click = (selector: string) => doc.querySelector<HTMLElement>(selector)?.click();
+  /** Each step logged with what its handlers took (an event is handled at once). */
+  const timed = (label: string, act: () => void) => {
+    const start = performance.now();
+    act();
+    perf?.log(`tour ${label} ${Math.round(performance.now() - start)} ms`);
+  };
+  const back = () => timed('back', () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+  const click = (selector: string) => timed(selector, () => doc.querySelector<HTMLElement>(selector)?.click());
   await wait(3000);
   for (let round = 0; round < 2; round++) {
     for (const action of only.length ? only : TOUR) {

@@ -142,6 +142,23 @@ const TEMPLATE = `
 </div>
 <aside class="song-card" data-el="card" hidden></aside>`;
 
+/**
+ * Tiles drawn at once: more than a screen holds. The others follow in batches once the screen
+ * has come in: under its animated panel, a thousand tiles cost WebKit their first layout, and a
+ * restyle of all of them when the animation ends (150 ms each, measured with 1 367 songs).
+ */
+export const FIRST_TILES = 60;
+const TILE_BATCH = 150;
+/** The screen's entrance (`dock-in`, 0.32 s), and a little more. */
+const ENTRANCE_MS = 350;
+
+/** The tiles drawn at once and then each batch, as [from, to) over `count` songs. */
+export function tileBatches(count: number, first = FIRST_TILES, batch = TILE_BATCH): [number, number][] {
+  const batches: [number, number][] = [[0, Math.min(count, first)]];
+  for (let from = first; from < count; from += batch) batches.push([from, Math.min(count, from + batch)]);
+  return batches;
+}
+
 /** The song library: search, sort and filters over a grid of covers; a card for the chosen song. */
 let tileTemplate: HTMLElement | null = null;
 function blankTile(): HTMLElement {
@@ -175,6 +192,8 @@ export class Library {
   private previewing: string | null = null;
   private attackChoice: AttackDifficulty = savedAttackChoice();
   private partChoice: string | null = saved(PART_CHOICE);
+  /** Counts the grids drawn: batches of an older one stop. */
+  private drawn = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -254,7 +273,8 @@ export class Library {
     this.progress = progress;
     const scrolled: [HTMLElement, number][] = [];
     for (let e: HTMLElement | null = this.grid(); e && e !== this.root.parentElement; e = e.parentElement) scrolled.push([e, e.scrollTop]);
-    this.render();
+    // Every tile at once: the place in the grid is found again.
+    this.render(true);
     for (const [e, top] of scrolled) e.scrollTop = top;
     if (this.chosenSong) this.tileOf(this.chosenSong)?.classList.add('chosen');
   }
@@ -291,7 +311,9 @@ export class Library {
     this.render();
   }
 
-  private render(): void {
+  /** The grid for the query: the first tiles now, the others in batches (`all`: every one now). */
+  private render(all = false): void {
+    const drawing = ++this.drawn;
     (this.el.sort as HTMLSelectElement).value = this.query.sort;
     this.renderFilters();
     const list = selectSongs(this.songs, this.progress, this.query);
@@ -303,7 +325,15 @@ export class Library {
       this.grid().innerHTML = `<p class="empty">${t('Aucun morceau ne correspond.')}</p>`;
       return;
     }
-    this.grid().replaceChildren(...list.map((s) => this.tile(s)));
+    const [now, ...later] = tileBatches(list.length, all ? list.length : FIRST_TILES);
+    this.grid().replaceChildren(...list.slice(...now).map((s) => this.tile(s)));
+    const next = () => {
+      const batch = later.shift();
+      if (!batch || drawing !== this.drawn) return;
+      this.grid().append(...list.slice(...batch).map((s) => this.tile(s)));
+      requestAnimationFrame(next);
+    };
+    if (later.length) setTimeout(() => requestAnimationFrame(next), ENTRANCE_MS);
   }
 
   private renderFilters(): void {
