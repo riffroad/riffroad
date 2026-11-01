@@ -2318,7 +2318,7 @@ body:not(.live) .live-only {
   text-shadow: 0 8px 40px rgba(88, 200, 255, 0.35);
 }
 
-.menu-brand h1 span {
+.menu-brand h1 .brand-road {
   color: var(--accent);
 }
 
