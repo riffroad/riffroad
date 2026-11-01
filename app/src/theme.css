@@ -369,12 +369,81 @@ button.action:disabled {
   font-weight: 600 !important;
   letter-spacing: 0.02em !important;
   text-transform: uppercase;
+  /* The two words are inline-blocks (they animate apart): without this they could wrap between them. */
+  white-space: nowrap;
   color: var(--hot);
   text-shadow: 0 0 22px rgba(245, 158, 11, 0.55), 0 0 60px rgba(245, 158, 11, 0.25), 0 4px 0 #000 !important;
 }
 
-.menu-brand h1 span {
+.menu-brand h1 .brand-road {
   color: var(--accent) !important;
+}
+
+/* The title comes in word by word while a glow blooms behind it, like hot metal on the anvil.
+ * Opacity and transform only. */
+.menu-brand {
+  position: relative;
+  isolation: isolate;
+}
+
+.menu-brand h1 .brand-riff,
+.menu-brand h1 .brand-road {
+  display: inline-block;
+  animation: brand-in 0.5s cubic-bezier(0.23, 1, 0.32, 1) backwards;
+}
+
+.menu-brand h1 .brand-riff {
+  animation-delay: 0.06s;
+}
+
+.menu-brand h1 .brand-road {
+  animation-delay: 0.14s;
+}
+
+.menu-brand::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  left: -48px;
+  top: -34px;
+  width: 460px;
+  height: 180px;
+  background: radial-gradient(closest-side, rgba(245, 158, 11, 0.3), transparent);
+  opacity: 0.6;
+  pointer-events: none;
+  animation: brand-bloom 1.2s cubic-bezier(0.23, 1, 0.32, 1) 0.2s backwards;
+}
+
+@keyframes brand-in {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+}
+
+@keyframes brand-bloom {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@keyframes brand-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* After the rules above, which it overrides: the title still arrives, without moving. */
+@media (prefers-reduced-motion: reduce) {
+  .menu-brand h1 .brand-riff,
+  .menu-brand h1 .brand-road,
+  .menu-brand::before {
+    animation-name: brand-fade;
+  }
 }
 
 .menu-brand p {
