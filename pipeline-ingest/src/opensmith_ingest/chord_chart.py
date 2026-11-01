@@ -26,6 +26,13 @@ INTERVALS = {"maj": (0, 4, 7), "min": (0, 3, 7), "5": (0, 7)}
 # Price of a chord change against the per-beat match (a cosine, 0 to 1): a passing note does not
 # change the chord, a new chord held for a beat or two does.
 CHANGE = 0.2
+# A power chord's template scores this much less than the others: a beat whose third is heard at
+# all gets its major or minor chord. Measured on the 97 bench songs (two halves of about 29,000
+# beats), whole chords go from 30 to 55 % of the beats strummed (25 to 47 % on the other half;
+# 61 % in the hand-written charts), wrong ones from 19.5 to 19.6 % (18.5 to 19.4 %), a third
+# against the written one under 1 %. The song's key, giving each power chord the third of its
+# degree, makes 96 % of them whole but 3.4 % with the wrong third.
+POWER = 0.1
 # A beat with less guitar than this share of the song's usual beat is a rest.
 QUIET = 0.15
 # A strum's notes last this share of the beat (no sustain trail: the next strum follows).
@@ -107,6 +114,14 @@ def _templates() -> np.ndarray:
     return t / np.linalg.norm(t, axis=1, keepdims=True)
 
 
+def _scores(weights: np.ndarray) -> np.ndarray:
+    """(beats, templates): how well each template matches each beat's pitch classes (cosine),
+    a power chord's less POWER."""
+    scores = (weights / (np.linalg.norm(weights, axis=1, keepdims=True) + 1e-9)) @ _templates().T
+    scores[:, QUALITIES.index("5") :: len(QUALITIES)] -= POWER
+    return scores
+
+
 def _smooth(scores: np.ndarray, change: float) -> list[int]:
     """The best template per beat (Viterbi), every change of template costing `change`."""
     n, k = scores.shape
@@ -125,22 +140,20 @@ def _smooth(scores: np.ndarray, change: float) -> list[int]:
 def recognise(notes: list[RawNote], beats: list[float], change: float = CHANGE, quiet: float = QUIET) -> list[tuple[int, str] | None]:
     """The chord of each beat (between `beats[i]` and `beats[i + 1]`) as (root pitch class,
     quality), None for a rest: major, minor and power-chord templates matched to the beat's
-    pitch classes, then smoothed over the song."""
+    pitch classes (`_scores`), then smoothed over the song."""
     weights = pitch_classes(notes, beats)
     if not len(weights):
         return []
     loud = weights.sum(1)
     usual = float(np.median(loud[loud > 0])) if (loud > 0).any() else 0.0
-    unit = weights / (np.linalg.norm(weights, axis=1, keepdims=True) + 1e-9)
-    path = _smooth(unit @ _templates().T, change)
+    path = _smooth(_scores(weights), change)
     return [None if loud[i] <= quiet * usual else (k // len(QUALITIES), QUALITIES[k % len(QUALITIES)]) for i, k in enumerate(path)]
 
 
 def root_margins(notes: list[RawNote], beats: list[float], chords: list[tuple[int, str] | None]) -> list[float]:
     """For each beat's chord (`recognise`), how much better its template matches the beat's own
-    notes than the best template on another root (cosines, -1 to 1); 0 for a rest."""
-    weights = pitch_classes(notes, beats)
-    scores = (weights / (np.linalg.norm(weights, axis=1, keepdims=True) + 1e-9)) @ _templates().T
+    notes than the best template on another root (`_scores`); 0 for a rest."""
+    scores = _scores(pitch_classes(notes, beats))
     out = []
     for s, chord in zip(scores, chords):
         if chord is None:

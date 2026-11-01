@@ -103,6 +103,13 @@ def test_chords_are_recognised_beat_by_beat_and_rests_are_kept():
     assert recognise(notes, beats) == [(C, "maj")] * 4 + [(G, "maj")] * 4 + [None] * 2 + [(A, "min")] * 4
 
 
+def test_a_third_heard_at_all_makes_the_whole_chord():
+    # E and B loud, G# softer (without POWER, still E5): E major, where the bare fifth alone stays
+    # E5 (long enough each to be worth a change of chord).
+    notes = held([40, 47, 52], 0, 8) + held([56], 0, 8, loud=0.5) + held([40, 47, 52], 8, 8)
+    assert recognise(notes, [k * BEAT for k in range(17)]) == [(E, "maj")] * 8 + [(E, "5")] * 8
+
+
 def test_power_chords_are_told_from_major_and_minor():
     notes = held([40, 47, 52], 0, 4) + held([45, 52, 57], 4, 4)
     assert recognise(notes, [k * BEAT for k in range(9)]) == [(E, "5")] * 4 + [(A, "5")] * 4
