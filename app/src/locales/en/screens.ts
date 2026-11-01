@@ -103,6 +103,9 @@ export const SCREENS: Record<string, string> = {
   'IA': 'AI',
   'Notes transcrites automatiquement depuis l’enregistrement : il peut y avoir des erreurs.': 'Notes transcribed automatically from the recording: there may be mistakes.',
   'Accords du morceau': 'The song’s chords',
+  'Mise à jour des accords · {song}': 'Chords brought up to date · {song}',
+  'Les accords d’un morceau MP3 se mettent à jour, en fond (Imports).': 'The chords of one MP3 song are being brought up to date, in the background (Imports).',
+  'Les accords de {n} morceaux MP3 se mettent à jour, en fond (Imports).': 'The chords of {n} MP3 songs are being brought up to date, in the background (Imports).',
   '{part} (brouillon)': '{part} (draft)',
   'Notes devinées depuis l’enregistrement, justes moins d’une fois sur deux : un brouillon. Les accords du morceau sont bien plus sûrs.':
     'Notes guessed from the recording, right less than half the time: a draft. The song’s chords are far surer.',

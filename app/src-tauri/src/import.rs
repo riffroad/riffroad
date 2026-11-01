@@ -73,6 +73,9 @@ pub struct Job {
     pub error: Option<String>,
     /// Library folder of the song a tab is placed on (`None`: a new song).
     pub target: Option<String>,
+    /// The MP3 song in library folder `source` charted again with today's rules, in place.
+    #[serde(default)]
+    pub refresh: bool,
     /// What the stage is doing now, in its own words (the pipeline being installed).
     pub detail: Option<String>,
     /// Library folder the running import writes into, removed if it is interrupted.
@@ -98,6 +101,7 @@ impl Job {
             title: None,
             error: None,
             target,
+            refresh: false,
             detail: None,
             out: None,
             pid: None,
@@ -123,6 +127,8 @@ struct SavedJob {
     source: String,
     #[serde(default)]
     target: Option<String>,
+    #[serde(default)]
+    refresh: bool,
     state: JobState,
     #[serde(default)]
     error: Option<String>,
@@ -628,6 +634,26 @@ impl Importer {
         Some(job)
     }
 
+    /// Queues charting again, with today's rules, the MP3 song in library `folder` (an import
+    /// made with older ones), unless it is queued already.
+    pub fn refresh(&self, folder: &Path) -> Job {
+        let source = folder.to_string_lossy().into_owned();
+        let mut st = self.inner.state.lock().unwrap();
+        if let Some(job) = st.jobs.iter().find(|j| j.active() && j.refresh && j.source == source) {
+            return job.clone();
+        }
+        let mut job = st.push(folder, Some(source));
+        job.refresh = true;
+        if let Some(stored) = st.jobs.last_mut() {
+            stored.refresh = true;
+        }
+        save(&self.inner, &st);
+        drop(st);
+        (self.inner.notify)(&job);
+        self.inner.wake.notify_all();
+        job
+    }
+
     /// Queues placing a Guitar Pro `tab` on the song already converted in library `folder`.
     pub fn place_tab(&self, tab: &Path, folder: &Path) -> Job {
         let mut st = self.inner.state.lock().unwrap();
@@ -727,9 +753,13 @@ fn resume(library: &Path) -> State {
             let mut job = Job::new(st.next_id, Path::new(&s.source), s.target);
             job.state = JobState::Failed;
             job.error = s.error;
+            job.refresh = s.refresh;
             st.jobs.push(job);
         } else if matches!(s.state, JobState::Queued | JobState::Running) {
             st.push(Path::new(&s.source), s.target);
+            if let Some(job) = st.jobs.last_mut() {
+                job.refresh = s.refresh;
+            }
         }
     }
     st
@@ -745,6 +775,7 @@ fn save(inner: &Inner, st: &State) {
         .map(|j| SavedJob {
             source: j.source.clone(),
             target: j.target.clone(),
+            refresh: j.refresh,
             state: j.state,
             error: j.error.clone(),
             out: j.out.clone(),
@@ -875,13 +906,14 @@ fn run(inner: &Inner, id: u32) {
     // A tab placed on a converted song works in that song's folder, which must survive a failure.
     let target = job.target.as_ref().map(PathBuf::from);
     let sub = match &target {
+        _ if job.refresh => "refresh".to_string(),
         Some(_) => "retab".to_string(),
         None => match inner.kind(&source) {
             Some(sub) => sub,
             None => return fail("unsupported file format".into()),
         },
     };
-    if !source.is_file() {
+    if !(if job.refresh { source.is_dir() } else { source.is_file() }) {
         return fail(format!("file not found: {}", source.display()));
     }
     if let Some(install) = pipeline.install.as_ref().filter(|i| i.needed()) {
@@ -995,6 +1027,36 @@ mod tests {
         let script = dir.join("fake-ingest.sh");
         fs::write(&script, format!("#!/bin/sh\nout=\"$4\"\n{body}\n")).unwrap();
         Pipeline { program: "/bin/sh".into(), args: vec![script.to_string_lossy().into_owned()], path: std::env::var("PATH").unwrap_or_default(), install: None }
+    }
+
+    #[test]
+    fn an_mp3_charted_again_runs_in_the_queue_on_its_own_folder() {
+        let dir = scratch("refresh");
+        let library = dir.join("library");
+        let folder = library.join("Band - Song");
+        fs::create_dir_all(&folder).unwrap();
+        // `refresh <folder> -o <folder> --progress-json`: the charts rewritten in place.
+        let body = r#"[ "$1" = refresh ] && [ "$2" = "$out" ] && echo '{"stage":"transcribe","fraction":0.05}' && echo '{}' > "$out/song_chart.json" && echo '{"done":true,"title":"Song"}'"#;
+        let (tx, rx) = mpsc::channel();
+        let importer = Importer::new(library.clone(), Some(fake(&dir, body)), move |j| drop(tx.send(j.clone())));
+        let job = importer.refresh(&folder);
+        assert!(job.refresh && job.name == "Band - Song");
+        assert_eq!(importer.refresh(&folder).id, job.id, "queued once");
+        let done = rx.iter().find(|j| j.id == job.id && j.state == JobState::Done).expect("done");
+        assert_eq!(done.song.as_deref(), Some("Band - Song/song_chart.json"));
+        assert!(folder.is_dir(), "the song's folder stays");
+    }
+
+    #[test]
+    fn an_mp3_left_to_chart_again_is_still_that_at_the_next_launch() {
+        let library = scratch("refresh-resume");
+        let song = library.join("Band - Song").to_string_lossy().into_owned();
+        let saved = serde_json::json!({ "paused": true, "jobs": [{ "source": song, "target": song, "refresh": true, "state": "running" }] });
+        fs::write(library.join(QUEUE), saved.to_string()).unwrap();
+        let st = resume(&library);
+        assert_eq!(st.jobs.len(), 1);
+        assert!(st.jobs[0].refresh && st.jobs[0].state == JobState::Queued);
+        assert!(library.join("Band - Song").to_string_lossy() == st.jobs[0].source);
     }
 
     #[test]

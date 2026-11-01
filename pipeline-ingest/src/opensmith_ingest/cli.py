@@ -101,6 +101,11 @@ def _parser() -> argparse.ArgumentParser:
     again.add_argument("--no-consensus", action="store_true", help="keep each repeat of a phrase as transcribed")
     again.add_argument("--retune", action="store_true", help="detect the tuning again instead of keeping it")
 
+    refresh = sub.add_parser("refresh", help="an imported MP3's charts made again from its stems with today's rules (the app's queue)")
+    refresh.add_argument("folder", type=Path, help="the imported song's folder")
+    refresh.add_argument("-o", "--out", type=Path, help="the same folder (as the app passes it)")
+    refresh.add_argument("--progress-json", action="store_true", help=machine)
+
     export = sub.add_parser("export-feedpak", help="an imported song (its folder) → a .feedpak: every part, its audio and cover")
     export.add_argument("folder", type=Path)
     export.add_argument("-o", "--out", type=Path, required=True, help="the .feedpak to write")
@@ -266,6 +271,18 @@ def _run(args: argparse.Namespace, emit: Emit | None) -> None:
             chart = rechart(folder, consensus=not args.no_consensus, report=report, retune=args.retune)
             details = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in report.items())
             print(f"{chart.artist} — {chart.title}: {len(chart.notes)} notes, {len(chart.chords)} chords, {len(chart.anchors)} hand positions ({details})")
+    elif args.cmd == "refresh":
+        from .pipeline import rechart
+
+        if args.out is not None and args.out.resolve() != args.folder.resolve():
+            sys.exit("refresh: the song is charted again in its own folder (-o is that folder)")
+        if emit:
+            emit(stage="transcribe", fraction=0.05)
+        chart = rechart(args.folder)
+        if emit:
+            imported(emit, chart, args.folder / "song_chart.json")
+        else:
+            print(f"{chart.artist} — {chart.title}: charted again")
     elif args.cmd == "export-feedpak":
         from .importers.feedpak import export_feedpak
 

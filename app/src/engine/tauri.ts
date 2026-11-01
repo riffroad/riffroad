@@ -109,6 +109,11 @@ export class TauriEngine implements Engine {
     return invoke<number>('fix_chords', { id, changes });
   }
 
+  /** Queues charting again the MP3 songs imported with older rules: how many. */
+  refreshCharts(): Promise<number> {
+    return invoke<number>('refresh_charts');
+  }
+
   /** The song of chart `id` (every part, its audio and cover) as a .feedpak at `path`. */
   exportFeedpak(id: string, path: string): Promise<void> {
     return invoke<void>('export_feedpak', { id, path });

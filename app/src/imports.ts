@@ -22,6 +22,8 @@ export interface Job {
   error: string | null;
   /** Library folder of the song a tab is being placed on. */
   target: string | null;
+  /** An MP3 song charted again with today's rules, in its folder (`source`). */
+  refresh?: boolean;
   /** What the stage does now, in its tool's words (the converter being installed). */
   detail?: string | null;
 }
@@ -555,7 +557,7 @@ export class Imports {
   private fillJob(row: HTMLElement, job: Job): void {
     row.dataset.state = job.state;
     row.title = job.source;
-    row.querySelector('b')!.textContent = job.title ?? job.name;
+    row.querySelector('b')!.textContent = job.refresh ? t('Mise à jour des accords · {song}', { song: job.title ?? job.name }) : (job.title ?? job.name);
     row.querySelector('.job-status')!.textContent = jobStatus(job);
     row.querySelector<HTMLElement>('.bar i')!.style.width = `${Math.round(job.fraction * 100)}%`;
     // The analysis view: each step of the pipeline, the one at work lit, its own progress.

@@ -11,7 +11,7 @@
    "kind": "audio",
    "file": "wave-rider.mp3"
   },
-  "generator": "opensmith-ingest 0.1.0"
+  "generator": "opensmith-ingest 0.1.0 chords/2"
  },
  "audio": {
   "backing": "backing.ogg",

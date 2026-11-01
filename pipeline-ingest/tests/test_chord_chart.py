@@ -135,7 +135,12 @@ def test_the_chord_chart_strums_each_beat_and_eases_the_low_levels(tmp_path):
         assert chart.templates[chords_l[0].template].frets == frets
     assert chart.templates[chart.events_at(2)[1][0].template].name == "C5"
     chart.save(tmp_path / "song_chart.chords.json")
-    assert Chart.load(tmp_path / "song_chart.chords.json").arrangement_name == "Chords"
+    again = Chart.load(tmp_path / "song_chart.chords.json")
+    assert again.arrangement_name == "Chords"
+    # Its rules said, for the app to chart again an MP3 imported with older ones.
+    from opensmith_ingest.chord_chart import RULES
+
+    assert again.generator.endswith(f" {RULES}") and again.generator.startswith("opensmith-ingest")
 
 
 def test_a_chord_fixed_by_the_player_is_replaced_everywhere(tmp_path):

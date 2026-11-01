@@ -14,11 +14,14 @@ from collections.abc import Callable
 import numpy as np
 
 from .builder import MAX_DIFFICULTY, BeatGrid, build_chart
-from .chart import Chart
+from .chart import GENERATOR, Chart
 from .fingering import Fingered, Note, Tuning
 from .harmony import NOTE_NAMES
 from .transcription import RawNote
 
+# The rules of the chord charts, written in their generator: an MP3 imported with older ones has
+# its charts made again by the app (`opensmith-ingest refresh`). Bumped when they change.
+RULES = "chords/2"
 QUALITIES = ("maj", "min", "5")
 # A chord's name (`harmony.chord_name`) ends with its quality's suffix.
 SUFFIXES = {"maj": "", "min": "m", "5": "5"}
@@ -305,7 +308,7 @@ def build_chord_chart(
     beats = [t for t in grid.beats if t <= duration]
     chords = recognise(notes, beats)
     tab = strums(chords, beats, tuning, [m < DOUBT for m in root_margins(notes, beats, chords)], offbeats(notes, beats, chords))
-    return build_chart(
+    chart = build_chart(
         None,
         grid,
         title=title,
@@ -318,6 +321,8 @@ def build_chord_chart(
         tab=tab,
         phrase_features=phrase_features,
     )
+    chart.generator = f"{GENERATOR} {RULES}"
+    return chart
 
 
 def chord_label(chord: tuple[int, str]) -> str:
@@ -376,6 +381,7 @@ def rechord(chart: Chart, changes: dict[tuple[int, str], tuple[int, str]] | None
         tab=strums(fixed, beats, chart.tuning, muted, offbeat),
     )
     new.album, new.year = chart.album, chart.year
+    new.generator = f"{GENERATOR} {RULES}"
     new.audio_backing, new.audio_guitar, new.audio_mix, new.audio_offset = chart.audio_backing, chart.audio_guitar, chart.audio_mix, chart.audio_offset
     if [(p.start, p.end) for p in new.phrases] == [(p.start, p.end) for p in chart.phrases]:
         for p, old in zip(new.phrases, chart.phrases):

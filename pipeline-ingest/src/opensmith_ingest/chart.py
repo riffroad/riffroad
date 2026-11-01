@@ -120,6 +120,8 @@ class Chart:
     chords: list[ChartChord] = field(default_factory=list)
     anchors: list[AnchorEvent] = field(default_factory=list)
     hand_shapes: list[HandShape] = field(default_factory=list)
+    # What made it: this converter, and the rules of its kind of chart when they change.
+    generator: str = GENERATOR
 
     def to_dict(self) -> dict:
         r = lambda x: round(float(x), 4)  # noqa: E731 — 0.1 ms is far below anything audible
@@ -133,7 +135,7 @@ class Chart:
                 "year": self.year,
                 "duration": r(self.duration),
                 "source": {"kind": self.source_kind, "file": self.source_file},
-                "generator": GENERATOR,
+                "generator": self.generator,
             },
             "audio": {
                 "backing": self.audio_backing,
@@ -200,6 +202,7 @@ class Chart:
             duration=meta["duration"],
             source_kind=meta["source"]["kind"],
             source_file=meta["source"]["file"],
+            generator=meta.get("generator", GENERATOR),
             tuning=tuning,
             arrangement_name=arr["name"],
             arrangement_type=arr["type"],

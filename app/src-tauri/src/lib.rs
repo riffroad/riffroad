@@ -387,6 +387,45 @@ async fn fix_chords(app: State<'_, App>, importer: State<'_, Importer>, id: Stri
     tauri::async_runtime::spawn_blocking(move || importer.fix_chords(&path, &changes)).await.map_err(|e| e.to_string())?
 }
 
+/// The rules of an MP3's chord chart today (`chord_chart.RULES` in the converter), at the end of
+/// its generator: a song imported with older ones is charted again.
+const CHORD_RULES: &str = "chords/2";
+
+/// Library folders of the MP3 songs to chart again: their chord chart is missing or made with
+/// older rules, and their guitar stem is there to make it from.
+fn outdated_charts(root: &Path, songs: &[SongEntry]) -> Vec<PathBuf> {
+    let read = |path: &Path| fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let mut out = Vec::new();
+    for song in songs.iter().filter(|s| s.source == "audio") {
+        let Ok(chart) = resolve(root, &song.id) else { continue };
+        let Some(folder) = chart.parent() else { continue };
+        let current = read(&folder.join("song_chart.chords.json"))
+            .and_then(|c| c["meta"]["generator"].as_str().map(|g| g.ends_with(&format!(" {CHORD_RULES}"))))
+            .unwrap_or(false);
+        let stem = read(&chart).and_then(|c| c["audio"]["guitar"].as_str().map(|g| folder.join(g).is_file())).unwrap_or(false);
+        if !current && stem {
+            out.push(folder.to_path_buf());
+        }
+    }
+    out
+}
+
+/// Queues charting again the MP3 songs imported with older rules (`outdated_charts`): how many.
+#[tauri::command]
+async fn refresh_charts(app: State<'_, App>, importer: State<'_, Importer>) -> Result<usize, String> {
+    let (root, charts) = (app.library.clone(), app.charts.clone());
+    let importer = importer.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let folders = outdated_charts(&root, &Index::of(&root, &charts).songs);
+        for folder in &folders {
+            importer.refresh(folder);
+        }
+        folders.len()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// The song of chart `id` (its folder: every part, its audio and cover) as a `.feedpak` at `path`.
 #[tauri::command]
 async fn export_feedpak(app: State<'_, App>, importer: State<'_, Importer>, id: String, path: String) -> Result<(), String> {
@@ -1240,6 +1279,7 @@ pub fn run() {
             song_chords,
             fix_chords,
             export_feedpak,
+            refresh_charts,
             import_paths,
             imports,
             import_folder,
@@ -1404,6 +1444,49 @@ mod tests {
             "beats":[{{"time":0.0,"bar":1}}],"sections":[],"phrases":[],"chordTemplates":[],
             "notes":[],"chords":[],"anchors":[],"handShapes":[]}}"#
         )
+    }
+
+    #[test]
+    fn mp3_songs_with_older_chord_charts_are_charted_again() {
+        let root = scratch("outdated");
+        // An MP3 with its guitar stem: chord chart from older rules, from today's, none; a tab; an MP3 without its stem.
+        let song = |name: &str, kind: &str, stem: bool, chords: Option<&str>| {
+            let folder = root.join(name);
+            fs::create_dir_all(&folder).unwrap();
+            let main = chart(name, "x.mp3").replace(r#""kind":"audio""#, &format!(r#""kind":"{kind}""#));
+            let main = if stem { main.replace(r#""guitar":null"#, r#""guitar":"guitar.ogg""#) } else { main };
+            fs::write(folder.join("song_chart.json"), main).unwrap();
+            if stem {
+                fs::write(folder.join("guitar.ogg"), b"ogg").unwrap();
+            }
+            if let Some(generator) = chords {
+                fs::write(folder.join("song_chart.chords.json"), chart(name, "x.mp3").replace(r#""generator":"test""#, &format!(r#""generator":"{generator}""#))).unwrap();
+            }
+        };
+        song("old", "audio", true, Some("opensmith-ingest 0.1.0"));
+        song("today", "audio", true, Some(&format!("opensmith-ingest 0.1.0 {CHORD_RULES}")));
+        song("before-chords", "audio", true, None);
+        song("tab", "guitarpro", true, None);
+        song("no-stem", "audio", false, Some("opensmith-ingest 0.1.0"));
+        let songs = Index::of(&root, &Charts::default()).songs;
+        let mut found: Vec<String> = outdated_charts(&root, &songs).iter().map(|f| f.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        found.sort();
+        assert_eq!(found, ["before-chords", "old"]);
+    }
+
+    #[test]
+    fn the_shipped_chord_charts_are_made_with_todays_rules() {
+        // The converter's `chord_chart.RULES` and the app's CHORD_RULES say the same.
+        let demo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../demo");
+        let mut seen = 0;
+        for song in fs::read_dir(&demo).unwrap().flatten() {
+            let Ok(text) = fs::read_to_string(song.path().join("song_chart.chords.json")) else { continue };
+            let chart: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let generator = chart["meta"]["generator"].as_str().unwrap();
+            assert!(generator.ends_with(&format!(" {CHORD_RULES}")), "{}: {generator}", song.path().display());
+            seen += 1;
+        }
+        assert!(seen >= 3);
     }
 
     #[test]

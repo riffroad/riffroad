@@ -2648,6 +2648,12 @@ void progressLoaded.then(() => cloudQuietly(true));
 void progressLoaded.then(loadLibrary).then(() => {
   const song = new URLSearchParams(location.search).get('song');
   if (song) void start(song);
+  // MP3 songs imported with older chord rules are charted again, in the imports' queue.
+  if (engine instanceof TauriEngine)
+    void engine
+      .refreshCharts()
+      .then((n) => n && notice(tn(n, 'Les accords d’un morceau MP3 se mettent à jour, en fond (Imports).', 'Les accords de {n} morceaux MP3 se mettent à jour, en fond (Imports).')))
+      .catch((e) => console.error('refresh', e));
 });
 
 Object.assign(window, { opensmith: { engine, highway, perf, welcome: openWelcome, get view() { return view; }, get time() { return songTime; } } });
