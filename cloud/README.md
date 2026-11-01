@@ -36,3 +36,16 @@ Without the emulators, these tests say they were skipped and pass.
 Services, Firestore in europe-west1 with its rules, sign-in by e-mail, the server's own account,
 Cloud Run (0 to 2 instances), and the app's public key restricted to sign-in. It ends with the
 two values to put in `app/src-tauri/src/cloud.rs` (until then the app hides the account).
+
+Then, once, so that GitHub deploys the server itself:
+
+```bash
+./github-deploy.sh <project-id> [owner/repo]
+```
+
+A push to `main` that changes `cloud/` runs `.github/workflows/deploy-cloud.yml`: the tests
+against the emulators, then the image built on GitHub, pushed to the project (the last five
+kept) and put on Cloud Run, its address unchanged. No key is stored on GitHub: Google trusts the
+repository's own tokens, for its main branch only (workload identity federation), and lends them
+an account that can push an image and update the service, nothing else. `deploy.sh` stays for
+the first setup and for Firestore's rules.

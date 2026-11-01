@@ -1,0 +1,78 @@
+# Deploys the saves server when cloud/ changes on main, once its tests pass against the Firebase
+# emulators. Google trusts this repository's own tokens for main (cloud/github-deploy.sh): no key
+# is stored here, and a fork or a pull request cannot deploy.
+name: Deploy the server
+
+on:
+  push:
+    branches: [main]
+    paths: ['cloud/**', '.github/workflows/deploy-cloud.yml']
+  workflow_dispatch:
+
+# One deployment at a time, none cut short.
+concurrency:
+  group: deploy-cloud
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PROJECT: studio-998403342-4f8d5
+  REGION: europe-west1
+  SERVICE: opensmith-api
+  IMAGE: europe-west1-docker.pkg.dev/studio-998403342-4f8d5/server/opensmith-api
+
+jobs:
+  test:
+    name: Tests against the Firebase emulators
+    if: github.repository == 'riffroad/riffroad'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cloud
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install -g firebase-tools
+      - run: firebase emulators:exec --project demo-opensmith --only auth,firestore 'cargo test'
+
+  deploy:
+    name: Cloud Run
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/804178317836/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-deployer@studio-998403342-4f8d5.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: cloud
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # The service keeps its account, settings and address; only its image changes.
+      - run: gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --image "$IMAGE:$GITHUB_SHA" --quiet
+      - name: The new version answers
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format 'value(status.url)')
+          curl -sf --retry 5 --retry-all-errors "$URL/health"
