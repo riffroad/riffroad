@@ -103,6 +103,9 @@ export const SCREENS: Record<string, string> = {
   'IA': 'AI',
   'Notes transcrites automatiquement depuis l’enregistrement : il peut y avoir des erreurs.': 'Notes transcribed automatically from the recording: there may be mistakes.',
   'Accords du morceau': 'The song’s chords',
+  '{part} (brouillon)': '{part} (draft)',
+  'Notes devinées depuis l’enregistrement, justes moins d’une fois sur deux : un brouillon. Les accords du morceau sont bien plus sûrs.':
+    'Notes guessed from the recording, right less than half the time: a draft. The song’s chords are far surer.',
   'Exporter en .feedpak': 'Export as .feedpak',
   'Toutes ses parties, la musique et la pochette, pour feedBack et les autres jeux qui lisent ce format.':
     'All its parts, the music and the cover, for feedBack and the other games that read the format.',

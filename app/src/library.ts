@@ -15,11 +15,18 @@ export function arrangementLabel(name: string): string {
   return labels[name.toLowerCase()] ?? name;
 }
 
-export const partLabel = (part: SongEntry): string => arrangementLabel(part.arrangement);
+/** A part of an MP3 that is not its chords: notes guessed from the recording, a draft. */
+export const isDraft = (part: SongEntry): boolean => sourceOf(part) === 'ai' && part.arrangement.toLowerCase() !== 'chords';
 
-/** The arrangement of `song` to show first: the kind the player last chose, if it has one. */
+export const partLabel = (part: SongEntry): string =>
+  isDraft(part) ? t('{part} (brouillon)', { part: arrangementLabel(part.arrangement) }) : arrangementLabel(part.arrangement);
+
+/** The arrangement of `song` to show first: an MP3's chords (its notes are a draft), else the
+ * kind the player last chose, if it has one. */
 export function preferredPart(song: SongEntry, kind: string | null): SongEntry {
-  return partsOf(song).find((p) => kind && p.arrangementType === kind) ?? song;
+  const parts = partsOf(song);
+  const chords = sourceOf(song) === 'ai' ? parts.find((p) => !isDraft(p)) : undefined;
+  return chords ?? parts.find((p) => kind && p.arrangementType === kind) ?? song;
 }
 
 /** Where a song's notes come from, which says how much to trust them. */
@@ -38,6 +45,7 @@ export function aboutSource(song: SongEntry): string {
   if (song.source === 'synth') return t('Morceau de démonstration généré par Riffroad : les notes exactes de sa guitare.');
   // The chords recognised from an MP3: the engine takes either third (`Chart::free_thirds`).
   if (sourceOf(song) === 'ai' && song.arrangement.toLowerCase() === 'chords') return t('Accords reconnus automatiquement depuis l’enregistrement, justes environ quatre temps sur cinq : majeur ou mineur, les deux comptent, tant que la fondamentale et la quinte sonnent.');
+  if (isDraft(song)) return t('Notes devinées depuis l’enregistrement, justes moins d’une fois sur deux : un brouillon. Les accords du morceau sont bien plus sûrs.');
   return SOURCES[sourceOf(song)].about;
 }
 

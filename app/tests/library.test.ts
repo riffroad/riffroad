@@ -36,10 +36,24 @@ describe('library', () => {
     expect(parseChord('Am7')).toBeNull();
   });
 
+  it('opens an MP3 on its chords, its notes shown as a draft', () => {
+    const lead = song('m', 'Riff', 'Band', { source: 'audio', arrangement: 'Lead', arrangementType: 'lead' });
+    const chords = song('m2', 'Riff', 'Band', { source: 'audio', arrangement: 'Chords', arrangementType: 'rhythm' });
+    const mp3 = { ...lead, others: [chords] };
+    expect(preferredPart(mp3, 'lead').id).toBe('m2');
+    expect(partLabel(lead)).toBe('Lead (brouillon)');
+    expect(partLabel(chords)).toBe('Accords');
+    expect(aboutSource(lead)).toContain('brouillon');
+    // A tab's parts as before: the kind chosen last.
+    const tab = { ...lead, source: 'guitarpro', hasAudio: true, others: [{ ...chords, source: 'guitarpro', arrangement: 'Rhythm' }] };
+    expect(preferredPart(tab, 'lead').id).toBe('m');
+    expect(partLabel(tab)).toBe('Lead');
+  });
+
   it('says the chords of an MP3 count major or minor', () => {
     const chords = song('e', 'Riff', 'Band', { source: 'audio', arrangement: 'Chords', arrangementType: 'rhythm' });
     expect(aboutSource(chords)).toContain('majeur ou mineur');
-    expect(aboutSource({ ...chords, arrangement: 'Lead' })).toBe(SOURCES.ai.about);
+    expect(aboutSource({ ...chords, arrangement: 'Lead' })).toContain('brouillon');
     expect(aboutSource({ ...chords, source: 'guitarpro', hasAudio: true })).toBe(SOURCES.tab.about);
   });
 
@@ -101,6 +115,9 @@ describe('arrangements of a song', () => {
     arrangementType,
     notes: 10,
     chords: 0,
+    // A tab's parts (an MP3's notes would be drafts).
+    source: 'guitarpro',
+    hasAudio: true,
   });
   const song = { ...part('nd/song_chart.json', 'Lead', 'lead'), others: [part('nd/song_chart.bass.json', 'Bass', 'bass'), part('nd/song_chart.rhythm.json', 'Rhythm', 'rhythm')] };
 
