@@ -9,6 +9,9 @@ their content, sections, anchors, hand shapes — and difficulty levels:
     level 3  + eighth notes; full chords
     level 4  everything (sixteenths, triplets)
 
+A slice may bring its own simpler forms (`Fingered.ladder`): the chord charts of an MP3 go
+from the root to the power chord, a smaller chord, then the whole one.
+
 Every phrase gets at least one event at level 0, so a beginner always has something to play.
 """
 
@@ -140,6 +143,23 @@ def _template_for(sl: Fingered, keep: list[int], tuning: Tuning) -> tuple[tuple[
     fingers = chord_fingers(above, max(0, sl.anchor - tuning.capo))
     name = chord_name([sl.notes[k].pitch for k in keep])
     return tuple(frets), tuple(fingers), name
+
+
+def _reductions(sl: Fingered) -> list[tuple[int, Fingered]]:
+    """A chord's forms for the easy levels, as (highest level, slice): its bass note, its two
+    lowest strings for a chord of four or more, then the whole chord."""
+    n = len(sl.notes)
+    by_string = sorted(range(n), key=lambda k: sl.placements[k][0])
+
+    def part(keep: list[int]) -> Fingered:
+        techs = [sl.techniques[k] for k in keep] if sl.techniques else None
+        return Fingered(sl.time, [sl.notes[k] for k in keep], [sl.placements[k] for k in keep], sl.anchor, techs)
+
+    tiers = [(0 if n == 2 else 1, part(by_string[:1]))]
+    if n >= 4:
+        tiers.append((2, part(by_string[:2])))
+    tiers.append((MAX_DIFFICULTY, sl))
+    return tiers
 
 
 def _clean_chords(notes: list[Note]) -> tuple[list[Note], int]:
@@ -325,28 +345,22 @@ def build_chart(
             s, f = sl.placements[0]
             chart.notes.append(ChartNote(sl.time, s, f, sus, (lvl, MAX_DIFFICULTY), dict(techs[0])))
             continue
-        shared = {k: v for k, v in techs[0].items() if all(t.get(k) == v for t in techs)}
-        n = len(sl.notes)
-        by_string = sorted(range(n), key=lambda k: sl.placements[k][0])
-        tiers = [("bass", 0 if n == 2 else 1)]
-        if n >= 4:
-            tiers.append(("power", 2))
-        tiers.append(("full", MAX_DIFFICULTY))
         start = lvl
-        for kind, top in tiers:
+        for top, part in sl.ladder or _reductions(sl):
             if start > top:
                 continue
             span = (start, top)
             start = top + 1
-            if kind == "bass":
-                s, f = sl.placements[by_string[0]]
-                chart.notes.append(ChartNote(sl.time, s, f, sus, span, dict(techs[by_string[0]])))
-            else:
-                keep = by_string[:2] if kind == "power" else by_string
-                tid = template(*_template_for(sl, keep, tuning))
-                chart.chords.append(ChartChord(sl.time, tid, sus, span, None, dict(shared)))
-                if kind == "full":
-                    full_chords.append((sl.time, tid, sus))
+            ptechs = part.techniques or [{} for _ in part.placements]
+            if not part.is_chord:
+                s, f = part.placements[0]
+                chart.notes.append(ChartNote(sl.time, s, f, sus, span, dict(ptechs[0])))
+                continue
+            shared = {k: v for k, v in ptechs[0].items() if all(t.get(k) == v for t in ptechs)}
+            tid = template(*_template_for(part, list(range(len(part.notes))), tuning))
+            chart.chords.append(ChartChord(sl.time, tid, sus, span, None, dict(shared)))
+            if top == MAX_DIFFICULTY:
+                full_chords.append((sl.time, tid, sus))
 
     # Hand shapes: runs of the same full shape.
     slice_times = [sl.time for sl in tab]

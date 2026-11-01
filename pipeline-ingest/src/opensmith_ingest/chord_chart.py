@@ -1,6 +1,7 @@
 """Chord charts: the song's chords recognised beat by beat from its guitar's notes, strummed on
-the beats in the shapes a beginner learns first (C, G, D, Am, E5…). The builder gives the easy
-levels the bass note, then the two lowest strings, then the whole chord.
+the beats in the shapes a beginner learns first (C, G, D, Am, E5…). Each level asks a little
+more, as Rocksmith+ does with its chord charts: the root, the power chord on it, the chord on
+its highest four strings (F without its barre), then the whole chord.
 
 A whole note-by-note chart from a mixed recording is right for under half of its notes; the
 chords played on each beat are right for about four beats in five (major, minor or power chord
@@ -12,7 +13,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from .builder import BeatGrid, build_chart
+from .builder import MAX_DIFFICULTY, BeatGrid, build_chart
 from .chart import Chart
 from .fingering import Fingered, Note, Tuning
 from .transcription import RawNote
@@ -26,6 +27,11 @@ CHANGE = 0.2
 QUIET = 0.15
 # A strum's notes last this share of the beat (no sustain trail: the next strum follows).
 STRUM = 0.25
+# A chord whose root margin (`root_margins`) is below this is strummed muted: the beat's own
+# notes point to another chord, which the song's flow overruled. Measured on 97 hand-charted
+# songs, such beats are wrong half the time; muted (8 % of the beats), wrong chords go from 19.5
+# to 15.4 % of the beats, right ones from 80.5 to 76.8 %.
+DOUBT = 0.0
 
 # Shapes as intervals above the root, per string from the low E (None: not played), in
 # standard tuning, from the string the root is on. Open shapes only where they are open.
@@ -54,6 +60,8 @@ BARRE_SHAPES: dict[str, list[tuple[int | None, ...]]] = {
     "min": [(0, 7, 12, 15, 19, 24), (None, 0, 7, 12, 15, 19)],
     "5": [(0, 7, 12, None, None, None), (None, 0, 7, 12, None, None)],
 }
+# Strings of the smaller chord (`ladder`): the highest of the whole shape.
+SMALL = 4
 # Highest fret of an open shape; a barre is harder than any open shape, more so up the neck.
 OPEN_TOP = 3
 BARRE_COST = 2.0
@@ -116,6 +124,22 @@ def recognise(notes: list[RawNote], beats: list[float], change: float = CHANGE, 
     return [None if loud[i] <= quiet * usual else (k // len(QUALITIES), QUALITIES[k % len(QUALITIES)]) for i, k in enumerate(path)]
 
 
+def root_margins(notes: list[RawNote], beats: list[float], chords: list[tuple[int, str] | None]) -> list[float]:
+    """For each beat's chord (`recognise`), how much better its template matches the beat's own
+    notes than the best template on another root (cosines, -1 to 1); 0 for a rest."""
+    weights = pitch_classes(notes, beats)
+    scores = (weights / (np.linalg.norm(weights, axis=1, keepdims=True) + 1e-9)) @ _templates().T
+    out = []
+    for s, chord in zip(scores, chords):
+        if chord is None:
+            out.append(0.0)
+            continue
+        root, quality = chord
+        own = s[root * len(QUALITIES) + QUALITIES.index(quality)]
+        out.append(float(own - max(v for k, v in enumerate(s) if k // len(QUALITIES) != root)))
+    return out
+
+
 def _place(intervals: tuple[int | None, ...], root: int, tuning: Tuning, lowest: int) -> tuple[int, ...] | None:
     """Frets of `intervals` with the root pitch class `root` at fret `lowest` or above on its
     string (the shape's first played string), in `tuning` above its capo; None off the neck."""
@@ -165,19 +189,44 @@ def shape(root: int, quality: str, tuning: Tuning = Tuning()) -> tuple[int, ...]
     return best[1]
 
 
-def strums(chords: list[tuple[int, str] | None], beats: list[float], tuning: Tuning = Tuning()) -> list[Fingered]:
-    """A strum of each beat's chord on the beat, fingered as `shape` says."""
+def _strum(t: float, length: float, frets: tuple[int, ...], tuning: Tuning, muted: bool = False) -> Fingered:
+    """The notes of `frets` (low string first, -1 not played) struck at `t`, or muted by the
+    fretting hand (a strum that sounds no chord)."""
+    played = sorted(((tuning.strings[s] + f, s, f) for s, f in enumerate(frets) if f >= 0))
+    fretted = [f for f in frets if f > tuning.capo]
+    techniques = [{"mute": True} for _ in played] if muted else None
+    return Fingered(
+        t, [Note(t, p, length) for p, _, _ in played], [(s, f) for _, s, f in played], min(fretted) if fretted else tuning.capo + 1, techniques
+    )
+
+
+def ladder(root: int, quality: str, tuning: Tuning = Tuning()) -> list[tuple[int, tuple[int, ...]]]:
+    """The chord's forms from the easiest level up, as (highest level, frets): its root on its
+    own (levels 0-1), the power chord on it (2), its highest four strings (3), the whole shape.
+    A form that is the same as the next one is left to it (a power chord is all of them)."""
+    full = shape(root, quality, tuning)
+    power = shape(root, "5", tuning)
+    played = [s for s, f in enumerate(full) if f >= 0]
+    small = tuple(f if s in played[-SMALL:] else -1 for s, f in enumerate(full))
+    bass = next(s for s, f in enumerate(power) if f >= 0)
+    alone = tuple(f if s == bass else -1 for s, f in enumerate(power))
+    forms = [(1, alone), (2, power), (3, small), (MAX_DIFFICULTY, full)]
+    return [form for k, form in enumerate(forms) if k + 1 == len(forms) or forms[k + 1][1] != form[1]]
+
+
+def strums(chords: list[tuple[int, str] | None], beats: list[float], tuning: Tuning = Tuning(), muted: list[bool] | None = None) -> list[Fingered]:
+    """A strum of each beat's chord on the beat, fingered as `shape` says, with its easier forms
+    (`ladder`) for the easy levels; muted on the beats `muted` says."""
     out = []
     for i, chord in enumerate(chords):
         if chord is None:
             continue
         t, length = beats[i], (beats[i + 1] - beats[i]) * STRUM
-        frets = shape(*chord, tuning)
-        played = sorted(((tuning.strings[s] + f, s, f) for s, f in enumerate(frets) if f >= 0))
-        fretted = [f for f in frets if f > tuning.capo]
-        out.append(
-            Fingered(t, [Note(t, p, length) for p, _, _ in played], [(s, f) for _, s, f in played], min(fretted) if fretted else tuning.capo + 1)
-        )
+        mute = bool(muted and muted[i])
+        forms = [(top, _strum(t, length, frets, tuning, mute)) for top, frets in ladder(*chord, tuning)]
+        whole = forms[-1][1]
+        whole.ladder = forms
+        out.append(whole)
     return out
 
 
@@ -195,7 +244,8 @@ def build_chord_chart(
 ) -> Chart:
     """The "Chords" arrangement of a recording, from the notes heard on its guitar stem."""
     beats = [t for t in grid.beats if t <= duration]
-    tab = strums(recognise(notes, beats), beats, tuning)
+    chords = recognise(notes, beats)
+    tab = strums(chords, beats, tuning, [m < DOUBT for m in root_margins(notes, beats, chords)])
     return build_chart(
         None,
         grid,

@@ -103,6 +103,8 @@ class Fingered:
     """One slice of the solved tablature: notes sorted by pitch and where they are played.
 
     `techniques` (optional, parallel to `placements`) carries playing techniques from tabs.
+    `ladder` (optional) gives a chord its simpler forms for the easy levels, as (highest level,
+    slice), easiest first, the slice itself last; without it the chart builder makes them.
     """
 
     time: float
@@ -110,6 +112,7 @@ class Fingered:
     placements: list[tuple[int, int]]
     anchor: int
     techniques: list[dict] | None = None
+    ladder: list[tuple[int, Fingered]] | None = None
 
     @property
     def is_chord(self) -> bool:
