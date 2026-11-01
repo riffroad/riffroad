@@ -102,6 +102,8 @@ export const SCREENS: Record<string, string> = {
   'Notes écrites à la main pour cet enregistrement (feedpak ou plugin).': 'Notes written by hand for this recording (feedpak or a plugin).',
   'IA': 'AI',
   'Notes transcrites automatiquement depuis l’enregistrement : il peut y avoir des erreurs.': 'Notes transcribed automatically from the recording: there may be mistakes.',
+  'Accords reconnus automatiquement depuis l’enregistrement, justes environ quatre temps sur cinq : majeur ou mineur, les deux comptent, tant que la fondamentale et la quinte sonnent.':
+    'Chords recognised automatically from the recording, right on about four beats in five: major or minor, both count, as long as the root and the fifth ring.',
   'Tablature seule': 'Tab only',
   'Une tablature sans enregistrement : on joue sans la musique.':'A tab with no recording: you play without the music.',
   'Joués récemment': 'Recently played',

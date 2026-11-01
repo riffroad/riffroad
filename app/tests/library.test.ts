@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EVERY_SONG, FIRST_TILES, fold, partLabel, partsOf, phraseMastery, preferredPart, selectSongs, sourceOf, tileBatches, tuningsOf } from '../src/library';
+import { aboutSource, EVERY_SONG, FIRST_TILES, fold, partLabel, partsOf, phraseMastery, preferredPart, selectSongs, SOURCES, sourceOf, tileBatches, tuningsOf } from '../src/library';
 import { findSong, type SongEntry } from '../src/engine/types';
 import { emptyProgress, type Progress } from '../src/progress';
 
@@ -28,6 +28,13 @@ const PROGRESS: Progress = {
 };
 
 describe('library', () => {
+  it('says the chords of an MP3 count major or minor', () => {
+    const chords = song('e', 'Riff', 'Band', { source: 'audio', arrangement: 'Chords', arrangementType: 'rhythm' });
+    expect(aboutSource(chords)).toContain('majeur ou mineur');
+    expect(aboutSource({ ...chords, arrangement: 'Lead' })).toBe(SOURCES.ai.about);
+    expect(aboutSource({ ...chords, source: 'guitarpro', hasAudio: true })).toBe(SOURCES.tab.about);
+  });
+
   it('tells where the notes come from', () => {
     expect(SONGS.map(sourceOf)).toEqual(['ai', 'tab', 'chart', 'sheet']);
   });

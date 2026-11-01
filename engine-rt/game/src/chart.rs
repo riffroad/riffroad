@@ -242,7 +242,6 @@ impl Chart {
         Some(shift)
     }
 
-    /// Pitches of a chord template, low string first.
     /// Open strings a strum of chord `template` may brush on its way (MIDI): the string just
     /// below its lowest and just above its highest, when the chord leaves them unplayed.
     pub fn brushable(&self, template: usize) -> Vec<i32> {
@@ -258,6 +257,37 @@ impl Chart {
             .collect()
     }
 
+    /// Made by the machine from a recording (an MP3), not written by a person: its chords have
+    /// the right root far more often than the right third.
+    pub fn transcribed(&self) -> bool {
+        self.meta.source.kind == "audio"
+    }
+
+    /// Pitch classes of the thirds that chord `template` leaves free in a transcribed chart: both,
+    /// for a chord on a root (its bass) and its fifth — the recognition takes minor for major
+    /// more than anything else, and the player strums what the song plays. None otherwise.
+    pub fn free_thirds(&self, template: usize) -> Vec<i32> {
+        let pitches = self.chord_pitches(template);
+        let (true, Some(bass)) = (self.transcribed(), pitches.iter().min()) else { return Vec::new() };
+        let root = bass.rem_euclid(12);
+        if !pitches.iter().any(|m| m.rem_euclid(12) == (root + 7) % 12) {
+            return Vec::new();
+        }
+        vec![(root + 3) % 12, (root + 4) % 12]
+    }
+
+    /// What a strum of chord `template` must sound, and what else it may sound (MIDI): its notes
+    /// but the free thirds (`free_thirds`), which it may sound anywhere, as the open strings next
+    /// to it (`brushable`).
+    pub fn judged(&self, template: usize) -> (Vec<i32>, Vec<i32>) {
+        let thirds = self.free_thirds(template);
+        let free = |m: &i32| thirds.contains(&m.rem_euclid(12));
+        let mut allowed = self.brushable(template);
+        allowed.extend((0..128).filter(free));
+        (self.chord_pitches(template).into_iter().filter(|m| !free(m)).collect(), allowed)
+    }
+
+    /// Pitches of a chord template, low string first.
     pub fn chord_pitches(&self, template: usize) -> Vec<i32> {
         self.chord_templates[template]
             .frets

@@ -35,7 +35,10 @@ export function sourceOf(song: SongEntry): SongSource {
 
 /** What the source badge says about where this song's notes come from. */
 export function aboutSource(song: SongEntry): string {
-  return song.source === 'synth' ? t('Morceau de démonstration généré par Riffroad : les notes exactes de sa guitare.') : SOURCES[sourceOf(song)].about;
+  if (song.source === 'synth') return t('Morceau de démonstration généré par Riffroad : les notes exactes de sa guitare.');
+  // The chords recognised from an MP3: the engine takes either third (`Chart::free_thirds`).
+  if (sourceOf(song) === 'ai' && song.arrangement.toLowerCase() === 'chords') return t('Accords reconnus automatiquement depuis l’enregistrement, justes environ quatre temps sur cinq : majeur ou mineur, les deux comptent, tant que la fondamentale et la quinte sonnent.');
+  return SOURCES[sourceOf(song)].about;
 }
 
 export const SOURCES: Record<SongSource, { label: string; about: string }> = {

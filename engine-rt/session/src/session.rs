@@ -831,8 +831,9 @@ impl<B: AudioBackend> Session<B> {
                                         .is_some_and(|(first, probs)| probs.get((midi - first) as usize).is_some_and(|&p| p >= judging.heard))
                                 })
                         }
-                        Target::Chord { template, midis } => {
-                            let brushable = game.chart().brushable(*template);
+                        Target::Chord { template, .. } => {
+                            let (midis, brushable) = game.chart().judged(*template);
+                            let midis = &midis;
                             w.attacks.iter().filter(|&&a| a <= ready).any(|&a| match listener.as_mut() {
                                 Some(l) => {
                                     let mut best: Option<(i32, Vec<f32>)> = None;
@@ -912,9 +913,9 @@ impl<B: AudioBackend> Session<B> {
             // around `time + lag` on the clock of the attacks and of the guitar's audio.
             let lag = self.cfg.game.input_offset * self.rate;
             for (index, time, pitches) in game.chords_ready(now, listen) {
-                let brushable = match &game.expected()[index].target {
-                    Target::Chord { template, .. } => game.chart().brushable(*template),
-                    Target::Note { .. } => Vec::new(),
+                let (pitches, brushable) = match &game.expected()[index].target {
+                    Target::Chord { template, .. } => game.chart().judged(*template),
+                    Target::Note { .. } => (pitches, Vec::new()),
                 };
                 let at = time + lag;
                 let attack = self
@@ -1149,5 +1150,39 @@ mod tests {
         let half = probs(&[(43, 0.9), (50, 0.3), (55, 0.9)]);
         assert!(strummed(40, &half, &[43, 50, 55, 59], &[], &Judging::LENIENT));
         assert!(!strummed(40, &half, &[43, 50, 55, 59], &[], &Judging::NORMAL));
+    }
+
+    /// An A minor (x02210) from a chart of `source`.
+    fn a_minor(source: &str) -> opensmith_game::Chart {
+        let json = format!(
+            r#"{{"format":"opensmith-chart","version":1,
+            "meta":{{"title":"T","artist":"A","album":null,"year":null,"duration":4.0,"source":{{"kind":"{source}","file":"x"}},"generator":"test"}},
+            "audio":{{"backing":null,"guitar":null,"mix":null,"offset":0.0}},
+            "arrangement":{{"name":"Chords","type":"rhythm","tuning":{{"name":"E Standard","strings":[40,45,50,55,59,64]}},"capo":0,"maxDifficulty":0}},
+            "tempo":{{"bpm":120.0,"timeSignature":[4,4]}},"beats":[{{"time":0.0,"bar":1}}],"sections":[],
+            "phrases":[{{"name":"A","start":0.0,"end":4.0,"maxDifficulty":0}}],
+            "chordTemplates":[{{"name":"Am","frets":[-1,0,2,2,1,0],"fingers":[-1,0,2,3,1,0]}}],
+            "notes":[],"chords":[],"anchors":[],"handShapes":[]}}"#
+        );
+        opensmith_game::Chart::from_json(&json).unwrap()
+    }
+
+    #[test]
+    fn a_chord_transcribed_from_a_recording_counts_major_or_minor() {
+        // A major strummed (A2 E3 A3 C#4 E4) where the chart says A minor (… C4 …), its third
+        // heard for sure.
+        let major = probs(&[(45, 0.9), (52, 0.9), (57, 0.9), (61, 0.99), (64, 0.9)]);
+        let transcribed = a_minor("audio");
+        let (required, allowed) = transcribed.judged(0);
+        assert_eq!(required, vec![45, 52, 57, 64], "the third left free");
+        assert!(strummed(40, &major, &required, &allowed, &Judging::STRICT));
+        // The root and the fifth still have to be there: a C major is not an A anything.
+        let c_major = probs(&[(48, 0.9), (52, 0.9), (55, 0.9), (60, 0.9), (64, 0.9)]);
+        assert!(!strummed(40, &c_major, &required, &allowed, &Judging::NORMAL));
+        // Written by a person, the chart means its minor third.
+        let written = a_minor("guitarpro");
+        let (required, allowed) = written.judged(0);
+        assert_eq!(required, written.chord_pitches(0));
+        assert!(!strummed(40, &major, &required, &allowed, &Judging::NORMAL));
     }
 }

@@ -416,7 +416,8 @@ impl Game {
         }
         self.strums.push_back(t);
         let in_chord = self.expected.iter().any(|e| {
-            (e.time - t).abs() <= w + CHORD_GRACE && matches!(&e.target, Target::Chord { midis, .. } if midis.contains(&midi))
+            (e.time - t).abs() <= w + CHORD_GRACE
+                && matches!(&e.target, Target::Chord { template, midis } if midis.contains(&midi) || self.chart.free_thirds(*template).contains(&midi.rem_euclid(12)))
         });
         if in_chord {
             return None;
