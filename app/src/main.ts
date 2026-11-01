@@ -39,6 +39,14 @@ import {
   equipGuitar,
   localCareer,
   MIN_SONG,
+  learnSong,
+  acceptSponsor,
+  fireComms,
+  hireComms,
+  post,
+  resolveMoment,
+  signContract,
+  trainSlot,
   releaseAlbum,
   studioTake,
   buyGear,
@@ -70,8 +78,10 @@ import { LessonsScreen } from './lessons-screen';
 import { interfaceSounds, SoundBoard } from './sfx';
 import { SOUND_NAMES, type SoundName } from './sounds';
 import { settleChallenge, TIERS, type Challenge } from './career/challenge';
+import { changes, learnSkills, ratingOf, sampleOf, SKILLS, type SkillId } from './career/skills';
+import { drillFor, DRILL_GOAL } from './career/training';
 import { levelOf } from './career/difficulty';
-import { learn, rehearse, REHEARSAL, starter } from './career/repertoire';
+import { rehearse, REHEARSAL, starter } from './career/repertoire';
 import { Crowd } from './career/crowd';
 import { CareerScreen } from './career/screen';
 import { lang, LANGS, localize, setLang, t, tn, type Lang } from './i18n';
@@ -195,6 +205,10 @@ let studioRun: string | null = null;
 let playSpeed = 1;
 /** The lesson being played (its index), null for a song. */
 let lessonRun: number | null = null;
+/** A career training drill being played, on the card's rating it works. */
+let drillRun: SkillId | null = null;
+/** What the last song moved on the guitarist's card. */
+let skillMoves: ReturnType<typeof changes> = [];
 /** Each lesson's best, kept on this Mac. */
 let lessonRecords = loadLessons();
 const screens = {
@@ -283,6 +297,8 @@ const stageRules = () => levelOf(career.difficulty);
 
 /** The career is kept with the library in the app (the first version kept it in the window's
  * storage: picked up from there once). */
+/** The career save was read: before that, nothing is measured into it (it would be lost). */
+let careerReady = false;
 const careerLoaded = engine.career
   .load()
   .then(async (raw) => {
@@ -294,7 +310,10 @@ const careerLoaded = engine.career
     updateMenu();
   })
   .catch(() => {})
-  .then(wearGuitar);
+  .then(() => {
+    careerReady = true;
+    wearGuitar();
+  });
 
 function storeCareer(): void {
   void engine.career.save(career);
@@ -397,7 +416,7 @@ function setMode(next: Mode): void {
 
 /** Where leaving a song goes back to. */
 function backLabel(): string {
-  return lessonRun !== null ? t('Leçons') : challengeRun || studioRun ? t('Carrière') : t('Morceaux');
+  return lessonRun !== null ? t('Leçons') : challengeRun || studioRun || drillRun ? t('Carrière') : t('Morceaux');
 }
 
 const quick = $<HTMLFormElement>('quick');
@@ -1069,6 +1088,7 @@ function showMenu(): void {
   sfx.room(null);
   if (lessonRun !== null) recordFor(false);
   lessonRun = null;
+  drillRun = null;
   challengeRun = null;
   studioRun = null;
   if ((tuner.visible || ampPanel.visible) && engine instanceof TauriEngine) engine.setTuner(false);
@@ -1093,6 +1113,7 @@ function openImports(): void {
 
 async function start(id: string, riffOpening = false): Promise<void> {
   lessonRun = null;
+  drillRun = null;
   recordFor(false);
   // Wait mode is the lessons': a song keeps its time.
   if (engine instanceof TauriEngine) engine.setWait(false);
@@ -1202,7 +1223,37 @@ const careerScreen = new CareerScreen($('career'), {
     studioRun = id;
     void start(id);
   },
+  train: (skill) => {
+    engine.unlock();
+    void startDrill(skill);
+  },
+  choose: (choice) => {
+    career = resolveMoment(career, choice);
+    storeCareer();
+    careerScreen.showHub(career);
+  },
+  sign: (id) => {
+    career = signContract(career, id);
+    storeCareer();
+    careerScreen.showHub(career);
+  },
+  sponsor: (o) => {
+    career = acceptSponsor(career, o);
+    storeCareer();
+    careerScreen.showBusiness(career);
+  },
+  post: (kind) => {
+    career = post(career, kind) ?? career;
+    storeCareer();
+    careerScreen.showSocial(career);
+  },
+  comms: (hire) => {
+    career = hire ? hireComms(career) : fireComms(career);
+    storeCareer();
+    careerScreen.showSocial(career);
+  },
   release: () => {
+    const before = career.money;
     const out = releaseAlbum(career);
     if (!out) return;
     career = out.career;
@@ -1211,7 +1262,7 @@ const careerScreen = new CareerScreen($('career'), {
       t('{album} est sorti : {copies} exemplaires, {money} € et {fans} nouveaux fans.', {
         album: out.release.name,
         copies: out.release.copies.toLocaleString(NUMBERS),
-        money: (out.release.copies * 2).toLocaleString(NUMBERS),
+        money: (career.money - before).toLocaleString(NUMBERS),
         fans: Math.round(out.release.copies * 0.15).toLocaleString(NUMBERS),
       }),
     );
@@ -1219,7 +1270,7 @@ const careerScreen = new CareerScreen($('career'), {
     careerScreen.showStudio(career);
   },
   learn: (id) => {
-    career = { ...career, repertoire: learn(career.repertoire, id, weekIndex(career)) };
+    career = learnSong(career, id) ?? career;
     storeCareer();
     careerScreen.showRepertoire(career);
   },
@@ -1273,6 +1324,7 @@ async function startLesson(index: number, pace: LessonPace = lessonsScreen.pace)
   const lesson = lessons()[index];
   if (!lesson) return;
   lessonRun = index;
+  drillRun = null;
   recordFor(lesson.record ?? false);
   current = null;
   currentId = null;
@@ -1303,6 +1355,70 @@ async function startLesson(index: number, pace: LessonPace = lessonsScreen.pace)
   hud.toast({ kind: 'phrase', title: lesson.title, detail: lesson.how[0] });
   if (tunerNeeded(chart)) openTuner(chart);
   else restart();
+}
+
+/** A training drill on the card's `skill`, made for its rating, played like a lesson. */
+async function startDrill(skill: SkillId): Promise<void> {
+  await careerLoaded;
+  const lesson = drillFor(skill, ratingOf(career.skills, skill));
+  lessonRun = null;
+  drillRun = skill;
+  recordFor(false);
+  current = null;
+  currentId = null;
+  riffFirst = false;
+  riff = null;
+  playSpeed = 1;
+  showRiff();
+  attack = null;
+  attackNext = null;
+  forcedStep = null;
+  levelsForced = false;
+  challengeRun = null;
+  studioRun = null;
+  attackHud.show(null);
+  applyDemoSettings();
+  try {
+    if (engine instanceof TauriEngine) engine.setWait(false);
+    chart = await engine.loadLesson(lessonChart(lesson, 0));
+  } catch (e) {
+    notice(t('Impossible d’ouvrir l’entraînement : {error}', { error: (e as Error).message }));
+    sfx.ui('error');
+    return;
+  }
+  heldTuning = chart.arrangement.tuning.strings;
+  view = new GameView(chart);
+  highway.setChart(chart);
+  hud.toast({ kind: 'phrase', title: lesson.title, detail: lesson.how[0] });
+  if (tunerNeeded(chart)) openTuner(chart);
+  else restart();
+}
+
+/** The card measured on the song just played: by a guitar (not the game playing itself, as the
+ * browser's demo always does), not a slowed-down practice, not before the save was read. */
+function measureSkills(): void {
+  skillMoves = [];
+  if (!careerReady || !view || !chart || engine.kind !== 'live' || autopiloting() || playSpeed < 1 || riff) return;
+  const before = career.skills;
+  career = { ...career, skills: learnSkills(career.skills, sampleOf(view.items, chart, chart.meta.duration)) };
+  storeCareer();
+  skillMoves = changes(before, career.skills);
+}
+
+/** What the card moved, in a line: "Precision 61 → 63 · Chords 55 → 54". */
+const movesLine = (): string =>
+  skillMoves.map((m) => t('{skill} {from} → {to}', { skill: SKILLS.find((k) => k.id === m.id)!.label, from: m.from, to: m.to })).join(' · ');
+
+/** End of a drill: a slot of the career's week, and what the card moved. */
+function drillVerdict(acc: number, judged: boolean): void {
+  career = trainSlot(career);
+  storeCareer();
+  const ok = judged && acc >= DRILL_GOAL;
+  $('verdict').textContent = ok ? t('Séance réussie !') : t('Encore un essai !');
+  const moves = movesLine();
+  $('records').textContent = moves ? t('Ta fiche : {moves}', { moves }) : t('Ta fiche a pris note de la séance.');
+  $('records').classList.toggle('new', skillMoves.some((m) => m.to > m.from));
+  screens.results.querySelector<HTMLElement>('[data-action="next-lesson"]')!.hidden = true;
 }
 
 /** Recording sessions record the guitar whatever the settings say; elsewhere, the settings. */
@@ -1387,16 +1503,20 @@ function startGig(offer: Offer, setlist: string[]): void {
   void start(setlist[0]);
 }
 
+/** Notes and chords of a song at its full difficulty: how complete a gig played it. */
+const fullNotes = (s: SongEntry | null): number | undefined => s?.levelNotes?.at(-1) ?? (s ? s.notes + s.chords : undefined);
+
 /** A song of the gig over: into its progress, then the next one after a breath, an encore when
  * the crowd calls for it, or the end. */
 function gigSongEnded(): void {
   if (!gig || !view || !chart) return;
   engine.pause();
+  measureSkills();
   const grade = gradeOf(view.score);
   const outcome = recordSong(grade);
   gig.earned.push(...songEarns(grade, outcome?.masteryAfter ?? 0));
   const notes = view.score.hits + view.score.misses;
-  const song: GigSong = { id: currentId ?? '', title: chart.meta.title, grade, accuracy: accuracy(view.score), crowd: gig.crowd.value, notes, seconds: chart.meta.duration };
+  const song: GigSong = { id: currentId ?? '', title: chart.meta.title, grade, accuracy: accuracy(view.score), crowd: gig.crowd.value, notes, seconds: chart.meta.duration, full: fullNotes(current) };
   // The room answers the song: as warm as it is.
   sfx.applause(0.3 + 0.7 * gig.crowd.value);
   if (gig.crowd.value >= 0.5) sfx.cheer(gig.crowd.value);
@@ -1517,7 +1637,7 @@ function finishGig(outcome: GigOutcome): void {
   else if (outcome !== 'played' && view && chart && run.songs.length <= run.index && mode !== 'interlude') {
     const notes = view.score.hits + view.score.misses;
     const seconds = Math.min(chart.meta.duration, Math.max(0, songTime));
-    run.songs.push({ id: currentId ?? '', title: chart.meta.title, grade: gradeOf(view.score), accuracy: accuracy(view.score), crowd: run.crowd.value, notes, seconds });
+    run.songs.push({ id: currentId ?? '', title: chart.meta.title, grade: gradeOf(view.score), accuracy: accuracy(view.score), crowd: run.crowd.value, notes, seconds, full: fullNotes(current) });
   }
   gig = null;
   sfx.room(null);
@@ -1616,9 +1736,10 @@ function toLibrary(): void {
     const index = lessonRun;
     lessonRun = null;
     openLessons(index);
-  } else if (challengeRun || studioRun) {
+  } else if (challengeRun || studioRun || drillRun) {
     challengeRun = null;
     studioRun = null;
+    drillRun = null;
     void openCareer();
   } else void openLibrary(libraryPurpose);
 }
@@ -1798,6 +1919,8 @@ function showResults(): void {
   $('verdict').textContent = verdicts[grade];
   sfx.cue('grade');
   if (lessonRun === null && playSpeed >= 1) sfx.applause(({ S: 1, A: 0.75, B: 0.5 } as Record<string, number>)[grade] ?? 0);
+  // The card measured on what was just played.
+  measureSkills();
   // Into the song's progress: levels for next time, records, mastery.
   let records = '';
   // Slowed down, a play is practice: no records, no rehearsal, no trophy.
@@ -1830,7 +1953,10 @@ function showResults(): void {
   screens.results.querySelector<HTMLElement>('[data-action="riff-weakest"]')!.hidden = lessonRun !== null;
   screens.results.querySelector<HTMLElement>('[data-action="next-lesson"]')!.hidden = true;
   screens.results.querySelector<HTMLElement>('[data-action="restart"]')!.classList.add('primary');
+  const moves = movesLine();
+  if (moves && lessonRun === null && !drillRun) $('records').textContent = [records, t('Ta fiche : {moves}', { moves })].filter(Boolean).join(' · ');
   if (lessonRun !== null) lessonVerdict(acc, judged, practice);
+  if (drillRun) drillVerdict(acc, judged);
   showAttackResults(grade);
   showTiming(view);
   // One bar per phrase: height = level played, colour = how well.

@@ -6,12 +6,12 @@
  * 12th, then nine chords, the guitar recorded as it plays them (takes kept on this Mac) so that
  * the note detection can be tuned to the player's own guitar and cable.
  */
-import type { Anchor, Chart, Chord, ChordTemplate, HandShape, Note } from './chart';
+import type { Anchor, Chart, Chord, ChordTemplate, HandShape, Note, Techniques } from './chart';
 import { t } from './i18n';
 
 /** At `beat` (counted from the first note), a note (string from the low E, fret) or a chord;
  * `hold`: beats it rings. */
-export type Step = { beat: number; string: number; fret: number; hold?: number } | { beat: number; chord: string; hold?: number };
+export type Step = { beat: number; string: number; fret: number; hold?: number; techniques?: Techniques } | { beat: number; chord: string; hold?: number };
 
 export interface Lesson {
   id: string;
@@ -26,6 +26,8 @@ export interface Lesson {
   steps: Step[];
   /** A recording session: no goal, the guitar recorded. */
   record?: boolean;
+  /** A career training drill (see career/training.ts): titled as it is. */
+  drill?: boolean;
 }
 
 /** Chords the lessons use: fret per string from the low E (-1: not played), and the fingers
@@ -324,12 +326,12 @@ export function lessonChart(lesson: Lesson, index: number, pace = 1): Chart {
       const template = names.indexOf(s.chord);
       chords.push({ time, template, sustain, levels: [0, 0], strum: 'down' });
       handShapes.push({ template, start: time, end: time + hold * spb * 0.9 });
-    } else notes.push({ time, string: s.string, fret: s.fret, sustain, levels: [0, 0] });
+    } else notes.push({ time, string: s.string, fret: s.fret, sustain, levels: [0, 0], ...(s.techniques ? { techniques: s.techniques } : {}) });
   }
   const last = steps.reduce((m, s) => Math.max(m, s.beat + (s.hold ?? 1)), 0);
   const beats = LEAD + Math.ceil(last / 4) * 4 + TAIL;
   const duration = beats * spb;
-  const title = lesson.record ? lesson.title : t('Leçon {n} · {title}', { n: index + 1, title: lesson.title });
+  const title = lesson.record || lesson.drill ? lesson.title : t('Leçon {n} · {title}', { n: index + 1, title: lesson.title });
   return {
     format: 'opensmith-chart',
     version: 1,

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { newWorld } from '../src/career/world';
 import {
+  learnSong,
   ENCORE,
   VENUES,
   WIN,
@@ -42,6 +44,10 @@ const steady = (c: Career): Career => ({ ...c, members: c.members.map((m) => ({ 
 const songs = (...crowds: number[]): GigSong[] =>
   crowds.map((crowd, i) => ({ id: `s${i}`, title: `Song ${i}`, grade: 'B', accuracy: 0.85, crowd, notes: 480, seconds: 240 }));
 const clean = (s: GigSong[]): GigSong[] => s.map((x) => ({ ...x, grade: 'A', accuracy: 0.95 }));
+/** Played at an easy level: a quarter of the songs' 1 920 notes. */
+const light = (s: GigSong[]): GigSong[] => s.map((x) => ({ ...x, full: 1920 }));
+/** Played nearly whole. */
+const whole = (s: GigSong[]): GigSong[] => s.map((x) => ({ ...x, full: 600 }));
 
 describe('career', () => {
   it('starts in the garage, the venues opening with the fans', () => {
@@ -105,21 +111,33 @@ describe('career', () => {
     expect(opening?.venue).toMatchObject({ id: 'usine', opening: 'Neon Wolves', songs: 3 });
   });
 
-  it('signs with the label only for a show the crowd loved and played clean (A)', () => {
+  it('signs with the label for a show the crowd loved, its songs not played in an easy version', () => {
     const c: Career = { ...newCareer(), act: 3, fans: 4600 };
     const showcase = offers(c).find((o) => o.venue.decisive)!;
     expect(showcase.venue.id).toBe('showcase');
-    expect(objective(c).text).toContain('note A ou mieux');
-    const sloppy = concludeGig(c, showcase, songs(0.9, 0.9, 0.9), 'played');
-    expect(sloppy.record).toMatchObject({ grade: 'B', accuracy: 0.85 });
-    expect(sloppy.actUp).toBe(false);
-    expect(sloppy.record.review).toContain('dénicheur');
-    const signed = concludeGig(c, showcase, clean(songs(0.9, 0.9, 0.9)), 'played');
+    expect(objective(c).text).toContain('les morceaux joués à 66 % de leurs notes');
+    // The crowd won over at an easy level (a quarter of the notes): the scout wants the songs.
+    const easy = concludeGig(c, showcase, light(clean(songs(0.9, 0.9, 0.9))), 'played');
+    expect(easy.record.complete).toBeCloseTo(0.25);
+    expect(easy.actUp).toBe(false);
+    expect(easy.record.review).toContain('dénicheur');
+    // Played nearly whole at 85 % (a B, the edge where dynamic difficulty keeps a player): signed.
+    const signed = concludeGig(c, showcase, whole(songs(0.9, 0.9, 0.9)), 'played');
+    expect(signed.record.grade).toBe('B');
     expect(signed.actUp).toBe(true);
     expect(signed.career.act).toBe(4);
     // Signed: on to the summer festivals.
     expect(offers({ ...signed.career, slots: [] }).map((o) => o.venue.id)).toEqual(['plage']);
-    expect(objective(signed.career).text).toBe('15\u202f000 fans pour jouer le tremplin');
+    expect(objective(signed.career).text).toBe('90\u202f000 fans pour jouer le tremplin');
+  });
+
+  it('takes a slot of the week to learn a song', () => {
+    const c: Career = { ...newCareer(), repertoire: {} };
+    const once = learnSong(c, 'new')!;
+    expect(once.repertoire.new).toBeDefined();
+    expect(once.slots).toEqual(['learn']);
+    expect(learnSong(once, 'new')).toBeNull();
+    expect(learnSong({ ...c, slots: ['rest', 'rest', 'rest'] }, 'other')).toBeNull();
   });
 
   it('weighs the gig’s accuracy by the notes of each song', () => {
@@ -164,6 +182,16 @@ describe('career', () => {
       challenge: null,
       band: null,
       souvenirs: [],
+      skills: { values: {}, history: [] },
+      world: newWorld(),
+      hype: 40,
+      moment: null,
+      sponsor: null,
+      contract: null,
+      followers: 0,
+      posted: null,
+      comms: false,
+      charity: null,
     });
     const old = sanitizeCareer({ ...newCareer(), report: undefined, history: [{ venue: 'Le Zinc', season: 1, week: 2, satisfaction: 0.5 }] })!;
     expect(old.report).toBeNull();
@@ -197,7 +225,7 @@ describe('career', () => {
     const cut = concludeGig(c, o, songs(0.85), 'abandoned', { encore });
     expect(cut.record.encore).toBeNull();
     expect(cut.career.stats.gigs).toBe(0);
-    expect(ENCORE).toBe(0.8);
+    expect(ENCORE).toBe(0.85);
   });
 
   it('rewards demanding songs played fully, refuses snippets', () => {

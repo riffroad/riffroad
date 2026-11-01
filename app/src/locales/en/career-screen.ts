@@ -106,6 +106,7 @@ export const CAREER_SCREEN: Record<string, string> = {
   '{n} morceaux': '{n} songs',
   '≈ {n} notes par minute': '≈ {n} notes per minute',
   'Apprendre': 'Learn',
+  'Apprendre · 1 créneau': 'Learn · 1 slot',
   'Chaque morceau a sa note sur 99, comme une carte de joueur : sa maîtrise et sa forme. La forme tient deux semaines, puis baisse ; rejoue le morceau (en jeu libre, en Score Attack, au Loop Trainer à pleine vitesse ou en concert) pour la remonter. Une setlist en forme rapporte jusqu’à ×1,1 en fans et en cachet, une setlist rouillée ×0,85.': 'Every song has a rating out of 99, like a player card: its mastery and its form. Form holds for two weeks, then drops; play the song again (in free play, Score Attack, Loop Trainer at full speed or at a gig) to bring it back up. A setlist in form earns up to ×1.1 in fans and fees, a rusty one ×0.85.',
   'Le dénicheur': 'The scout',
   'Cette semaine, des morceaux à ta portée pour l’acte en cours. Un morceau appris entre au répertoire, à toi de le faire monter.': 'This week, songs within your reach for the current act. A song you learn joins the repertoire; it’s up to you to raise it.',
@@ -180,6 +181,7 @@ export const CAREER_SCREEN: Record<string, string> = {
   '{names} a manqué la date : un remplaçant a joué.': '{names} missed the date: a stand-in played.',
   '{names} ont manqué la date : un remplaçant a joué.': '{names} missed the date: stand-ins played.',
   'Merch : {money} de ventes au stand.': 'Merch: {money} in sales at the stand.',
+  'Frais de tournée : {money} (équipe, camions, hôtels).': 'Tour costs: {money} (crew, trucks, hotels).',
   'L’affiche de la soirée rejoint l’album souvenirs.': 'Tonight’s poster goes into the scrapbook.',
   'L’exigence vient des notes jouées par minute, au niveau joué : des morceaux plus denses, joués plus complets, rapportent plus de fans et de cachet. La forme vient des répétitions : un morceau rejoué dans les deux semaines reste en forme.': 'Intensity comes from the notes played per minute, at the level played: denser songs, played more fully, earn more fans and fees. Form comes from practice: a song played again within two weeks stays in form.',
   'Continuer': 'Continue',
@@ -198,7 +200,7 @@ export const CAREER_SCREEN: Record<string, string> = {
 
   // Offers
   'Décisive · contre les Vautours': 'Decisive · vs the Vultures',
-  'Décisive · note {grade}': 'Decisive · grade {grade}',
+  'Décisive · {pct} % des notes': 'Decisive · {pct}% of the notes',
   'Date décisive': 'Decisive date',
   'Remplace {name}': 'Replacing {name}',
   'Première partie': 'Opening act',
@@ -248,7 +250,7 @@ export const CAREER_SCREEN: Record<string, string> = {
   'Résident': 'Resident',
   'Gagner le Bistrot Rock.': 'Win the Bistrot Rock.',
   'Signé !': 'Signed!',
-  'Gagner le showcase du label, avec la note A.': 'Win the label showcase, with an A grade.',
+  'Gagner le showcase du label.': 'Win the label showcase.',
   'Plus forts que les Vautours': 'Stronger than the Vultures',
   'Battre Les Vautours au tremplin.': 'Beat the Vultures at the battle of the bands.',
   'Premier album': 'Debut Album',

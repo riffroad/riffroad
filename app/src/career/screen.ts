@@ -41,6 +41,10 @@ import { GEAR, type GearId } from './gear';
 import { DIFFICULTIES, levelOf, type Difficulty } from './difficulty';
 import { EVENTS, RIVAL, rivalFans, weekEvent } from './events';
 import { ALBUM_TRACKS, albumQuality, LABEL, labelObjectives, objectiveBonus, signed as isSigned } from './label';
+import { CONTRACTS, payroll, sponsorGoal, sponsorOffers, wageOf, type LabelId, type SponsorOffer } from './manager';
+import { CAUSES, charityCost, clipCost, commsWage, postEffect, type Moment, type PostKind } from './press';
+import { MEASURED, overall, overallSince, ratingOf, SKILLS, weakest, type SkillId } from './skills';
+import { AWARDS, bandName, rankOf, sceneChart } from './world';
 import { market, moraleLabel, ROLES, type Candidate, type Musician } from './musicians';
 
 export interface CareerHooks {
@@ -74,6 +78,16 @@ export interface CareerHooks {
   /** A studio take of a song; the album released. */
   record(id: string): void;
   release(): void;
+  /** Training on the card's `skill` (a slot of the week). */
+  train(skill: SkillId): void;
+  /** A choice in the moment waiting. */
+  choose(choice: string): void;
+  /** The label contract signed; a sponsor signed. */
+  sign(id: LabelId): void;
+  sponsor(o: SponsorOffer): void;
+  /** This week's post; the communications manager hired or let go. */
+  post(kind: PostKind): void;
+  comms(hire: boolean): void;
   back(): void;
 }
 
@@ -173,6 +187,8 @@ export class CareerScreen {
     stat(t('Fans'), num(career.fans));
     stat(t('Argent'), euros(career.money));
     stat(t('Concerts'), String(career.history.length));
+    stat(t('Hype'), String(career.hype));
+    stat(t('Classement'), t('{n}e', { n: this.rank(career) }));
     const goalBox = el('div', 'career-goal');
     const bar = el('div', 'career-bar');
     const fill = el('i');
@@ -193,10 +209,17 @@ export class CareerScreen {
       button(t('Le groupe · {names}', { names: career.members.map((m) => m.name.split(' ')[0]).join(', ') }), { career: 'members' }),
       button(t('Boutique · {money}', { money: euros(career.money) }), { career: 'shop' }),
       button(t('Album souvenirs · {n}', { n: career.souvenirs.length }), { career: 'album' }),
+      button(t('Ta fiche · {n}', { n: overall(career.skills) ?? '—' }), { career: 'card' }),
+      button(t('La scène · {n}e', { n: this.rank(career) }), { career: 'scene' }),
+      button(career.sponsor ? t('Affaires · {brand}', { brand: career.sponsor.brand }) : t('Affaires'), { career: 'business' }),
+      button(t('Réseaux · {n}', { n: num(career.followers) }), { career: 'social' }),
     );
     const foot = el('div', 'career-foot');
     foot.append(button(t('Nouvelle carrière'), { career: 'reset' }, 'action small subtle'));
-    panel.append(head, this.bandCard(career), el('p', 'career-act', ACTS[act].blurb));
+    panel.append(head, this.bandCard(career));
+    if (career.moment) panel.append(this.momentCard(career.moment));
+    if (isSigned(career) && !career.contract) panel.append(this.contractCard());
+    panel.append(el('p', 'career-act', ACTS[act].blurb));
     for (const n of career.news.slice(0, 1)) panel.append(el('p', 'career-news', n));
     if (!career.history.length && career.season === 1 && career.week === 1) {
       const level = el('p', 'career-level');
@@ -232,7 +255,7 @@ export class CareerScreen {
   private weekBar(career: Career): HTMLElement {
     const bar = el('section', 'week-bar');
     const dots = el('span', 'week-slots');
-    const names: Record<string, string> = { rest: t('Repos'), rehearsal: t('Répétition'), studio: t('Studio') };
+    const names: Record<string, string> = { rest: t('Repos'), rehearsal: t('Répétition'), studio: t('Studio'), learn: t('Apprentissage'), training: t('Entraînement') };
     for (let i = 0; i < SLOTS; i++) {
       const used = career.slots[i];
       const dot = el('span', `slot-dot${used ? ` used ${used.startsWith('gig') ? 'gig' : used}` : ''}`);
@@ -250,12 +273,16 @@ export class CareerScreen {
     const restSlot = button(t('Repos'), { career: 'rest-slot' });
     restSlot.title = t('Un créneau : le moral du groupe remonte en fin de semaine.');
     rehearse.disabled = restSlot.disabled = !free;
-    if (isSigned(career)) {
+    if (isSigned(career) && career.contract) {
       const studio = button(t('Studio · {n}/{total}', { n: Object.keys(career.album.takes).length, total: ALBUM_TRACKS }), { career: 'studio' });
-      studio.title = t('Enregistrer des prises pour le prochain album (un créneau par prise).');
+      studio.title = t('Enregistrer des prises pour le prochain album : une séance (un créneau) en fait deux.');
       actions.append(studio);
     }
-    actions.append(rehearse, restSlot, button(t('Semaine suivante'), { career: 'rest' }, 'action primary'));
+    const focus = weakest(career.skills);
+    const train = button(t('Entraînement · {skill}', { skill: SKILLS.find((k) => k.id === focus)!.label }), { career: 'train', value: focus });
+    train.title = t('Un créneau : une séance sur le point faible de ta fiche.');
+    train.disabled = !free;
+    actions.append(train, rehearse, restSlot, button(t('Semaine suivante'), { career: 'rest' }, 'action primary'));
     bar.append(head, actions);
     return bar;
   }
@@ -439,7 +466,9 @@ export class CareerScreen {
       const card = el('article', 'song-card proposal');
       const text = el('div', 'song-card-text');
       text.append(el('b', '', song.title), el('span', '', `${song.artist} · ${song.tuning} · ${formatTime(song.duration)}`), el('span', '', t('≈ {n} notes par minute', { n: Math.round(density(song)) })));
-      card.append(coverElement(song.title, song.artist, this.hooks.coverUrl(song), 'song-card-cover'), text, button(t('Apprendre'), { career: 'learn', song: song.id }, 'action primary small'));
+      const learnButton = button(t('Apprendre · 1 créneau'), { career: 'learn', song: song.id }, 'action primary small');
+      learnButton.disabled = slotsLeft(career) <= 0;
+      card.append(coverElement(song.title, song.artist, this.hooks.coverUrl(song), 'song-card-cover'), text, learnButton);
       scoutBox.append(card);
     }
     panel.append(
@@ -458,6 +487,201 @@ export class CareerScreen {
   }
 
   /** The label's objectives for the season, and what each pays. */
+  /** The band's place in the scene. */
+  private rank(career: Career): number {
+    return rankOf(sceneChart(career.world, career.band?.name ?? t('Ton groupe'), career.fans, weekIndex(career)));
+  }
+
+  /** A moment waiting for a choice: what happened, and what each choice will do. */
+  private momentCard(m: Moment): HTMLElement {
+    const box = el('section', 'career-moment');
+    box.append(el('b', '', m.title), el('p', '', m.text));
+    const choices = el('div', 'moment-choices');
+    for (const c of m.choices) {
+      const b = button(c.label, { career: 'moment', value: c.id }, 'action small');
+      b.append(el('small', '', c.hint));
+      choices.append(b);
+    }
+    box.append(choices);
+    return box;
+  }
+
+  /** The showcase won: the label contracts on the table. */
+  private contractCard(): HTMLElement {
+    const box = el('section', 'career-contract');
+    box.append(el('b', '', t('Le showcase est gagné : choisis ton label.')));
+    const list = el('div', 'contract-choices');
+    for (const c of CONTRACTS) {
+      const card = el('article', 'gear-card');
+      const top = el('header');
+      top.append(el('b', '', c.name), el('span', 'guitar-price', c.advance ? t('Avance {money}', { money: euros(c.advance) }) : t('Sans avance')));
+      card.append(top, el('p', '', c.blurb), button(t('Signer'), { career: 'contract', value: c.id }, 'action primary small'));
+      list.append(card);
+    }
+    box.append(list);
+    return box;
+  }
+
+  /** The guitarist's card: six ratings measured on what is played, the weakest to train. */
+  showCard(career: Career): void {
+    this.career = career;
+    const all = overall(career.skills);
+    const month = overallSince(career.skills, 30);
+    const panel = el('div', 'panel career-panel card-panel');
+    const head = el('header', 'screen-head');
+    head.append(
+      button(t('← Carrière'), { career: 'hub' }, 'action small'),
+      el('h2', '', t('Ta fiche')),
+      el('span', 'career-when', all !== null && month !== null && all !== month ? t('{sign}{n} en 30 jours', { sign: all > month ? '+' : '−', n: Math.abs(all - month) }) : ''),
+    );
+    const card = el('div', 'player-card');
+    const top = el('div', 'player-top');
+    top.append(el('b', 'player-overall', all === null ? '—' : String(all)), el('span', 'player-name', career.band?.name ?? t('Ton groupe')));
+    card.append(top);
+    const focus = weakest(career.skills);
+    for (const k of SKILLS) {
+      const r = ratingOf(career.skills, k.id);
+      const row = el('div', `player-skill${k.id === focus ? ' weakest' : ''}`);
+      const bar = el('i', 'skill-bar');
+      bar.style.setProperty('--fill', width(r === null ? 0 : (r - 40) / 59));
+      const measured = career.skills.values[k.id]?.notes ?? 0;
+      row.append(
+        el('b', 'skill-short', k.short),
+        el('span', `skill-rating ${r === null ? '' : ratingTier(r)}`, r === null ? '—' : String(r)),
+        bar,
+        el('span', 'skill-label', k.label),
+        el('small', '', r === null ? t('à mesurer : encore {n} notes', { n: Math.max(0, MEASURED - measured) }) : k.blurb),
+      );
+      card.append(row);
+    }
+    const train = button(t('S’entraîner : {skill} · 1 créneau', { skill: SKILLS.find((k) => k.id === focus)!.label }), { career: 'train', value: focus }, 'action primary');
+    train.disabled = slotsLeft(career) <= 0;
+    panel.append(
+      head,
+      card,
+      el('p', 'help', t('Mesurée sur ce que tu joues : morceaux, concerts, leçons, entraînements. Elle te suit d’une carrière à l’autre, comme tes guitares.')),
+      train,
+    );
+    this.root.replaceChildren(panel);
+  }
+
+  /** The scene: every band by fans, the awards won. */
+  showScene(career: Career): void {
+    this.career = career;
+    const name = career.band?.name ?? t('Ton groupe');
+    const chart = sceneChart(career.world, name, career.fans, weekIndex(career));
+    const panel = el('div', 'panel career-panel scene-panel');
+    const head = el('header', 'screen-head');
+    head.append(button(t('← Carrière'), { career: 'hub' }, 'action small'), el('h2', '', t('La scène')), el('span', 'career-when', t('{n}e sur {total}', { n: rankOf(chart), total: chart.length })));
+    const table = el('ol', 'scene-chart');
+    for (const line of chart) {
+      const li = el('li', line.you ? 'you' : line.rival ? 'rival' : '');
+      li.append(el('span', '', line.you || line.rival ? line.name : bandName(line.name)), el('b', '', num(line.fans)));
+      table.append(li);
+    }
+    const awards = el('ul', 'scene-awards');
+    for (const a of career.world.awards) awards.append(el('li', '', t('Saison {season} · {award}', { season: a.season, award: AWARDS[a.id] })));
+    panel.append(
+      head,
+      el('p', 'help', t('Les fans de chaque groupe, semaine après semaine. Un groupe juste au-dessus de toi t’invite parfois à faire sa première partie : une offre de plus dans la semaine, devant un public venu pour lui.')),
+      table,
+      el('h3', '', t('Les prix')),
+      career.world.awards.length ? awards : el('p', 'help', t('En fin de saison : groupe de l’année (premier du classement), meilleur live, révélation (fans ×3 en une saison), album de l’année.')),
+    );
+    this.root.replaceChildren(panel);
+  }
+
+  /** The business: wages, the sponsor, the label contract. */
+  showBusiness(career: Career): void {
+    this.career = career;
+    const act = playingAct(career);
+    const panel = el('div', 'panel career-panel business-panel');
+    const head = el('header', 'screen-head');
+    head.append(button(t('← Carrière'), { career: 'hub' }, 'action small'), el('h2', '', t('Affaires')), el('span', 'career-when', t('{money} en poche', { money: euros(career.money) })));
+    panel.append(head, el('h3', '', t('Les salaires')));
+    const wages = payroll(career.members, act);
+    if (!wages) panel.append(el('p', 'help', t('Les copains jouent pour rien jusqu’aux clubs : à partir de l’acte 3, chaque musicien est payé chaque semaine.')));
+    else {
+      const list = el('ul', 'business-list');
+      for (const m of career.members) list.append(el('li', '', t('{name} · {money} par semaine', { name: m.name, money: euros(wageOf(m, act)) })));
+      panel.append(el('p', 'help', t('{money} par semaine en tout, payés en fin de semaine : sans assez d’argent, le moral baisse.', { money: euros(wages) })), list);
+    }
+    panel.append(el('h3', '', t('Le sponsor')));
+    if (career.sponsor) {
+      const s = career.sponsor;
+      const box = el('article', 'gear-card owned');
+      const top = el('header');
+      top.append(el('b', '', s.brand), el('span', 'guitar-price', t('{money} par semaine', { money: euros(s.pay) })));
+      box.append(
+        top,
+        el('p', '', `${sponsorGoal(s)} · ${t('prime {money}', { money: euros(s.bonus) })}`),
+        el('span', 'guitar-state', s.goal === 'gigs' ? t('{done} sur {n} · encore {weeks} semaines', { done: s.done, n: s.target, weeks: s.weeksLeft }) : t('Encore {weeks} semaines', { weeks: s.weeksLeft })),
+      );
+      panel.append(box);
+    } else {
+      const deals = sponsorOffers(act, career.season, career.week, career.fans, this.rank(career), career.followers);
+      if (!deals.length) panel.append(el('p', 'help', t('Pas d’offre cette semaine : les marques passent toutes les quatre semaines, à partir des bars.')));
+      const grid = el('div', 'gear-grid');
+      deals.forEach((o, i) => {
+        const card = el('article', 'gear-card');
+        const top = el('header');
+        top.append(el('b', '', o.brand), el('span', 'guitar-price', t('{money} par semaine', { money: euros(o.pay) })));
+        card.append(top, el('p', '', `${sponsorGoal(o)} · ${t('prime {money}', { money: euros(o.bonus) })}`), button(t('Signer'), { career: 'sponsor', value: String(i) }, 'action primary small'));
+        grid.append(card);
+      });
+      panel.append(grid);
+    }
+    panel.append(el('h3', '', t('Le label')));
+    if (career.contract) {
+      const c = CONTRACTS.find((x) => x.id === career.contract!.id)!;
+      panel.append(el('p', 'help', `${c.name} · ${c.blurb}`));
+    } else if (isSigned(career)) panel.append(this.contractCard());
+    else panel.append(el('p', 'help', t('Un label fera son offre au showcase de l’acte 3 : une major, un indépendant, ou l’autoproduction.')));
+    this.root.replaceChildren(panel);
+  }
+
+  /** The networks: followers, this week's post, the communications manager, good causes. */
+  showSocial(career: Career): void {
+    this.career = career;
+    const act = playingAct(career);
+    const panel = el('div', 'panel career-panel social-panel');
+    const head = el('header', 'screen-head');
+    head.append(button(t('← Carrière'), { career: 'hub' }, 'action small'), el('h2', '', t('Réseaux')), el('span', 'career-when', t('{n} abonnés · hype {hype}', { n: num(career.followers), hype: career.hype })));
+    panel.append(head, el('p', 'help', t('Une publication par semaine. Les abonnés suivent la hype et tes fans ; les marques paient plus un groupe suivi, et les appels aux dons viennent d’ici.')));
+    const posted = career.posted === `${career.season}-${career.week}`;
+    const grid = el('div', 'gear-grid');
+    const kinds: [PostKind, string, string, number][] = [
+      ['coulisses', t('Les coulisses'), t('Photos et vidéos de la route, gratuites.'), 0],
+      ['clip', t('Un clip'), t('Un vrai clip tourné pour un morceau.'), clipCost(act)],
+    ];
+    for (const [kind, name, blurb, cost] of kinds) {
+      const e = postEffect(kind, career.followers, career.fans, career.comms, career.hype);
+      const card = el('article', 'gear-card');
+      const top = el('header');
+      top.append(el('b', '', name), el('span', 'guitar-price', cost ? euros(cost) : t('Gratuit')));
+      const go = button(posted ? t('Déjà publié cette semaine') : t('Publier'), { career: 'post', value: kind }, 'action primary small');
+      go.disabled = posted || career.money < cost;
+      card.append(top, el('p', '', `${blurb} ${t('≈ {n} abonnés, hype +{hype}', { n: num(e.followers), hype: e.hype })}`), go);
+      grid.append(card);
+    }
+    panel.append(grid, el('h3', '', t('La chargée de communication')));
+    const wage = commsWage(act);
+    if (!wage) panel.append(el('p', 'help', t('Une chargée de communication te rejoint à partir des clubs : la hype retombe moins, les publications portent plus, la presse t’appelle plus souvent.')));
+    else {
+      const card = el('article', `gear-card solo${career.comms ? ' owned' : ''}`);
+      const top = el('header');
+      top.append(el('b', '', t('Inès, chargée de communication')), el('span', 'guitar-price', t('{money} par semaine', { money: euros(wage) })));
+      card.append(
+        top,
+        el('p', '', t('La hype retombe vers 55 au lieu de 40, les publications et les interviews portent moitié plus, la presse t’appelle plus souvent.')),
+        button(career.comms ? t('Se séparer d’elle') : t('L’embaucher'), { career: career.comms ? 'fire-comms' : 'hire-comms' }, career.comms ? 'action small' : 'action primary small'),
+      );
+      panel.append(card);
+    }
+    panel.append(el('h3', '', t('Les bonnes causes')), el('p', 'help', t('De temps en temps, tes abonnés relaient un appel : un don, ou un concert caritatif sans cachet et avec des frais, mais qui rapporte beaucoup de fans et de hype. Trois concerts caritatifs valent un trophée.')));
+    this.root.replaceChildren(panel);
+  }
+
   private labelBox(career: Career): HTMLElement {
     const box = el('section', 'label-box');
     box.append(el('small', '', t('{label} · objectifs de la saison · {money} chacun', { label: LABEL, money: euros(objectiveBonus(career.act)) })));
@@ -497,7 +721,7 @@ export class CareerScreen {
     const n = Object.keys(takes).length;
     head.append(button(t('← Carrière'), { career: 'hub' }, 'action small'), el('h2', '', t('Studio')), el('span', 'career-when', t('{n}/{total} morceaux · qualité {quality}', { n, total: ALBUM_TRACKS, quality: pct(albumQuality(career.album)) })));
     const cards = el('div', 'song-cards');
-    const free = slotsLeft(career) > 0;
+    const free = slotsLeft(career) > 0 || (career.album.session ?? 0) > 0;
     for (const k of this.known(career)) {
       const card = el('article', `song-card${k.song.id in takes ? ' gold' : ''}`);
       const text = el('div', 'song-card-text');
@@ -515,8 +739,12 @@ export class CareerScreen {
       el(
         'p',
         'help',
-        t('Chaque prise prend un créneau de la semaine : tu joues le morceau en entier, sa précision fait la prise, la meilleure est gardée. Huit morceaux font un album : {label} le sort, les ventes suivent sa qualité et tes fans.', { label: LABEL }) +
-          (free ? '' : ` ${t('Plus de créneau cette semaine')}.`),
+        t('Une séance de studio prend un créneau de la semaine et enregistre deux prises (trois dans ton propre studio) : tu joues le morceau en entier, sa précision fait la prise, la meilleure est gardée. Huit morceaux font un album : {label} le sort, les ventes suivent sa qualité et tes fans.', { label: LABEL }) +
+          ((career.album.session ?? 0) > 0
+            ? ` ${tn(career.album.session!, 'Séance en cours : encore {n} prise sans créneau.', 'Séance en cours : encore {n} prises sans créneau.')}`
+            : free
+              ? ''
+              : ` ${t('Plus de créneau cette semaine')}.`),
       ),
       cards,
       release,
@@ -720,6 +948,8 @@ export class CareerScreen {
     const notes: string[] = [];
     if (record.missing.length) notes.push(tn(record.missing.length, '{names} a manqué la date : un remplaçant a joué.', '{names} ont manqué la date : un remplaçant a joué.', { names: joined(record.missing) }));
     if (record.merch) notes.push(t('Merch : {money} de ventes au stand.', { money: euros(record.merch) }));
+    if (record.charity) notes.push(t('Concert caritatif pour {cause} : {money} de frais, et des fans en plus.', { cause: CAUSES[record.charity] ?? record.charity, money: euros(record.costs ?? 0) }));
+    else if (record.costs) notes.push(t('Frais de tournée : {money} (équipe, camions, hôtels).', { money: euros(record.costs) }));
     const souvenir = el('div', 'gig-souvenir');
     if (career.souvenirs[0]) souvenir.append(poster(career.souvenirs[0]), el('span', '', t('L’affiche de la soirée rejoint l’album souvenirs.')));
     panel.append(
@@ -772,15 +1002,24 @@ export class CareerScreen {
     const card = el('article', `offer${o.venue.decisive ? ' decisive' : ''}`);
     const head = el('header');
     head.append(el('b', '', o.venue.name));
-    if (o.venue.decisive) head.append(el('span', 'badge decisive-badge', o.venue.rival ? t('Décisive · contre les Vautours') : o.venue.grade ? t('Décisive · note {grade}', { grade: o.venue.grade }) : t('Date décisive')));
+    if (o.venue.decisive) head.append(el('span', 'badge decisive-badge', o.venue.rival ? t('Décisive · contre les Vautours') : o.venue.complete ? t('Décisive · {pct} % des notes', { pct: Math.round(o.venue.complete * 100) }) : t('Date décisive')));
     else if (o.headliner) head.append(el('span', 'badge opening-badge', t('Remplace {name}', { name: o.headliner })));
+    else if (o.invited) head.append(el('span', 'badge opening-badge', t('Première partie de {name}', { name: bandName(o.invited) })));
+    else if (o.charity) head.append(el('span', 'badge event-badge', t('Concert caritatif')));
     else if (o.venue.opening) head.append(el('span', 'badge opening-badge', t('Première partie')));
     if (o.scout) head.append(el('span', 'badge event-badge', t('Dénicheur · fans ×2')));
     if (o.acoustic) head.append(el('span', 'badge event-badge', t('Panne · acoustique')));
     const facts = el('dl', 'offer-facts');
     for (const [k, v] of [
       [t('Public'), `${o.audience}`],
-      [t('Cachet'), o.venue.fee ? t('jusqu’à {money}', { money: euros(feeFor(o.venue, 1) * (o.headliner ? 2 : 1)) }) : t('pour la gloire')],
+      [
+        t('Cachet'),
+        o.charity
+          ? t('aucun · {money} de frais', { money: euros(charityCost(o.venue.act)) })
+          : o.venue.fee
+            ? t('jusqu’à {money}', { money: euros(Math.round(feeFor(o.venue, 1) * (o.headliner ? 2 : o.invited ? 0.6 : 1))) })
+            : t('pour la gloire'),
+      ],
       [t('Setlist'), tn(o.songs, '{n} morceau', '{n} morceaux')],
     ]) {
       const cell = el('div');
@@ -805,7 +1044,8 @@ export class CareerScreen {
         : null;
     const pick = button(why ?? t('Choisir'), { career: 'pick', offer: String(i) }, 'action primary small');
     pick.disabled = !!why;
-    card.append(head, el('p', '', o.venue.blurb), facts, pick);
+    const about = o.charity ? t('Pour {cause} : un public venu pour la bonne cause, beaucoup de fans et de hype.', { cause: CAUSES[o.charity] ?? o.charity }) : o.venue.blurb;
+    card.append(head, el('p', '', about), facts, pick);
     return card;
   }
 
@@ -972,6 +1212,39 @@ export class CareerScreen {
       case 'studio':
         if (career) this.showStudio(career);
         break;
+      case 'card':
+        if (career) this.showCard(career);
+        break;
+      case 'scene':
+        if (career) this.showScene(career);
+        break;
+      case 'business':
+        if (career) this.showBusiness(career);
+        break;
+      case 'social':
+        if (career) this.showSocial(career);
+        break;
+      case 'post':
+        this.hooks.post(target.dataset.value as PostKind);
+        break;
+      case 'hire-comms':
+      case 'fire-comms':
+        this.hooks.comms(target.dataset.career === 'hire-comms');
+        break;
+      case 'train':
+        if (target.dataset.value) this.hooks.train(target.dataset.value as SkillId);
+        break;
+      case 'moment':
+        if (target.dataset.value) this.hooks.choose(target.dataset.value);
+        break;
+      case 'contract':
+        if (target.dataset.value) this.hooks.sign(target.dataset.value as LabelId);
+        break;
+      case 'sponsor': {
+        const deal = career && sponsorOffers(playingAct(career), career.season, career.week, career.fans, this.rank(career), career.followers)[Number(target.dataset.value)];
+        if (deal) this.hooks.sponsor(deal);
+        break;
+      }
       case 'take':
         if (target.dataset.song) this.hooks.record(target.dataset.song);
         break;

@@ -26,13 +26,14 @@ export const TROPHIES: readonly Trophy[] = [
   { id: 'pro', name: t('Pro de la scène'), blurb: t('Jouer 10 concerts jusqu’au bout sans une seule pause.'), scope: 'scene' },
   { id: 'bars', name: t('Bienvenue dans les bars'), blurb: t('Gagner la fête de fin d’année du lycée.'), scope: 'scene' },
   { id: 'resident', name: t('Résident'), blurb: t('Gagner le Bistrot Rock.'), scope: 'scene' },
-  { id: 'signe', name: t('Signé !'), blurb: t('Gagner le showcase du label, avec la note A.'), scope: 'scene' },
+  { id: 'signe', name: t('Signé !'), blurb: t('Gagner le showcase du label.'), scope: 'scene' },
   { id: 'tremplin', name: t('Plus forts que les Vautours'), blurb: t('Battre Les Vautours au tremplin.'), scope: 'scene' },
   { id: 'album', name: t('Premier album'), blurb: t('Sortir un album avec le label.'), scope: 'scene' },
   { id: 'hall', name: t('Hall of Fame'), blurb: t('Gagner la dernière date de la tournée des stades.'), scope: 'scene' },
   { id: 'cachets', name: t('Premier millier'), blurb: t('Gagner 1 000 € de cachets en tout.'), scope: 'scene' },
   { id: 'hue', name: t('Ça arrive aux meilleurs'), blurb: t('Se faire sortir de scène par le public.'), scope: 'scene' },
   { id: 'defi', name: t('Défi en or'), blurb: t('Décrocher l’or au défi de la semaine.'), scope: 'scene' },
+  { id: 'coeur', name: t('Cœur sur la main'), blurb: t('Jouer trois concerts caritatifs.'), scope: 'scene' },
   { id: 'sans-faute', name: t('Sans faute'), blurb: t('Finir un morceau d’au moins 150 notes sans en rater une.'), scope: 'song' },
   { id: 'centurion', name: t('Centurion'), blurb: t('Enchaîner 100 notes d’affilée.'), scope: 'song' },
   { id: 'legende', name: t('Légendaire'), blurb: t('Obtenir la note S sur un morceau d’au moins 50 notes.'), scope: 'song' },
@@ -108,6 +109,7 @@ export function careerTrophies(c: Career, gig: GigFeat | null): string[] {
   if (c.hallOfFame.length) won.push('hall');
   if (c.stats.earned >= 1000) won.push('cachets');
   if (c.challenge?.tier === 3) won.push('defi');
+  if ((c.stats.charity ?? 0) >= 3) won.push('coeur');
   return won;
 }
 

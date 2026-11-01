@@ -76,3 +76,13 @@ describe('repertoire', () => {
     expect(sanitizeRepertoire('nope')).toEqual({});
   });
 });
+
+describe('the first songs', () => {
+  it('share the library’s usual tuning: no retuning on stage at the first gig', () => {
+    const songs = [
+      { id: 'drop', notes: 50, chords: 0, duration: 200, tuning: 'Drop C#' },
+      ...['a', 'b', 'c', 'd'].map((id, i) => ({ id, notes: 100 + i * 50, chords: 0, duration: 200, tuning: 'E Standard' })),
+    ];
+    expect(Object.keys(starter(songs, [], 1, 150))).toEqual(['a', 'b', 'c']);
+  });
+});

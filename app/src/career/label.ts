@@ -24,6 +24,8 @@ export interface Release {
 export interface Album {
   takes: Takes;
   released: Release[];
+  /** Takes still free in a studio session already paid (a slot of the week buys a few). */
+  session?: number;
 }
 
 export interface Objective {
@@ -57,10 +59,10 @@ const POOL: { id: string; text: (n: number) => string; target: (act: number) => 
     count: (c, s) => c.history.filter((r) => r.season === s && r.encore).length,
   },
   {
-    id: 'note',
-    text: (n) => t('Obtenir la note A ou mieux sur {n} concerts', { n }),
+    id: 'complets',
+    text: (n) => t('Jouer {n} concerts avec les morceaux à 90 % de leurs notes ou plus', { n }),
     target: () => 2,
-    count: (c, s) => c.history.filter((r) => r.season === s && r.outcome === 'played' && (r.grade === 'A' || r.grade === 'S')).length,
+    count: (c, s) => c.history.filter((r) => r.season === s && r.outcome === 'played' && (r.complete ?? 0) >= 0.9).length,
   },
   {
     id: 'propre',
@@ -124,7 +126,7 @@ export function albumQuality(a: Album): number {
 }
 
 /** Copies an album sells: a share of the fans, much more for a clean record. */
-export const albumSales = (fans: number, quality: number): number => Math.round((fans * 0.5 * quality * quality) / 100) * 100;
+export const albumSales = (fans: number, quality: number): number => Math.round((fans * 0.3 * quality * quality) / 100) * 100;
 
 export const emptyAlbum = (): Album => ({ takes: {}, released: [] });
 
@@ -134,5 +136,6 @@ export function sanitizeAlbum(raw: unknown): Album {
   const takes: Takes = {};
   if (a.takes && typeof a.takes === 'object') for (const [id, q] of Object.entries(a.takes)) if (typeof q === 'number') takes[id] = Math.min(1, Math.max(0, q));
   const released = Array.isArray(a.released) ? a.released.filter((r) => r && typeof r.name === 'string' && typeof r.copies === 'number') : [];
-  return { takes, released };
+  const session = typeof a.session === 'number' && a.session > 0 ? Math.min(3, Math.round(a.session)) : 0;
+  return { takes, released, ...(session ? { session } : {}) };
 }

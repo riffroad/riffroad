@@ -23,6 +23,7 @@ export interface Scouted {
   notes: number;
   chords: number;
   duration: number;
+  tuning?: string;
 }
 
 /** Weeks a song keeps its form unplayed, and the form it loses each week after. */
@@ -100,7 +101,14 @@ export function scout<T extends Scouted>(songs: readonly T[], r: Repertoire, act
 export function starter(songs: readonly Scouted[], played: readonly string[], now: number, minLength = 0): Repertoire {
   const known = new Set(songs.map((s) => s.id));
   const ids = [...new Set(played.filter((id) => known.has(id)))];
-  const easiest = songs.filter((s) => s.duration >= minLength && !ids.includes(s.id)).sort((a, b) => density(a) - density(b) || a.id.localeCompare(b.id));
+  const fit = songs.filter((s) => s.duration >= minLength && !ids.includes(s.id));
+  // In the library's most common tuning: a first setlist without retuning on stage.
+  const counts = new Map<string, number>();
+  for (const s of fit) counts.set(s.tuning ?? '', (counts.get(s.tuning ?? '') ?? 0) + 1);
+  const usual = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const easiest = fit
+    .filter((s) => (s.tuning ?? '') === usual || (counts.get(usual ?? '') ?? 0) < STARTERS)
+    .sort((a, b) => density(a) - density(b) || a.id.localeCompare(b.id));
   for (const s of easiest) {
     if (ids.length >= STARTERS) break;
     ids.push(s.id);

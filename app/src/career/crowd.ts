@@ -8,7 +8,8 @@
 const WINDOW = 16;
 /** Recent accuracy at which the room is empty of goodwill, and at which it is on fire. */
 const FLOOR = 0.55;
-const CEIL = 0.95;
+// Near-perfect playing sets a room on fire: at 95 % it is already on fire for good players only.
+const CEIL = 0.98;
 /** How fast the room follows (s). */
 const TAU = 2;
 /** Below this, for that long, the band is booed off. */

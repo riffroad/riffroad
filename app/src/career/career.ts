@@ -18,14 +18,18 @@ import { sanitizeBand, type Band } from '../band';
 import { DEFAULT_GUITAR, GUITARS, guitarOf, isGuitar, type Guitar } from '../guitars';
 import type { SceneryId } from '../highway/scenery';
 import { lang, t } from '../i18n';
-import { gradeAtLeast, gradeFor } from '../progress';
+import { gradeFor } from '../progress';
 import { isTrophy } from '../trophies';
 import { isDifficulty, levelOf, type Difficulty } from './difficulty';
 import { headlinerOf, RIVAL, RIVAL_TARGET, stolenDate, weekEvent } from './events';
-import { AMP_WARMTH, GEAR, isGear, merchSales, PA_AUDIENCE, type GearId } from './gear';
+import { AMP_WARMTH, crewWages, GEAR, isGear, merchSales, OWN_STUDIO_BONUS, OWN_STUDIO_TAKES, PA_AUDIENCE, SCREENS_WARMTH, SESSION_TAKES, STAGE_AUDIENCE, STAGE_WARMTH, tourCosts, type GearId } from './gear';
 import { ALBUM_TRACKS, albumQuality, albumSales, emptyAlbum, recordTake, sanitizeAlbum, seasonLabel, signed, type Album, type Release } from './label';
+import { contractOf, payroll, PRICE, sanitizeContract, sanitizeSponsor, sponsorMet, startSponsor, type Contract, type LabelId, type SponsorOffer, type Sponsorship } from './manager';
 import { afterGig, afterWeek, bandFactor, crowdBoost, departures, hire, lineUp, ROLES, sanitizeMembers, startingBand, type Candidate, type Musician } from './musicians';
-import { formFactor, formOf, rehearse, rehearseAll, sanitizeRepertoire, STAGE, type Repertoire } from './repertoire';
+import { CAUSES, charityCost, clampHype, clipCost, commsWage, dispute, followersWeek, goodCause, hypeAfterGig, hypeFans, hypeWarmth, hypeWeek, interview, momentRoll, poaching, postEffect, rivalLabel, sanitizeMoment, viral, type Moment, type PostKind } from './press';
+import { emptySkills, overall, sanitizeSkills, type Skills } from './skills';
+import { AWARDS, invitation, newWorld, rankOf, sanitizeWorld, sceneChart, seasonAwards, worldWeek, type World } from './world';
+import { formFactor, formOf, learn, rehearse, rehearseAll, sanitizeRepertoire, STAGE, type Repertoire } from './repertoire';
 
 /** How a venue looks behind the highway: its set, how full, the name on its sign. */
 export interface VenueLook {
@@ -49,8 +53,9 @@ export interface Venue {
   fans: number;
   /** The act's decisive gig: won with a satisfaction of at least WIN (and `grade`). */
   decisive?: boolean;
-  /** The gig's grade (its songs' accuracy) the decisive gig asks for too. */
-  grade?: string;
+  /** The share of the setlist's notes (at the songs' full difficulty) the decisive gig asks to be
+   * played too: a scout, or the last date, wants the songs, not their easy version. */
+  complete?: number;
   /** An opening act: the band the crowd came for. */
   opening?: string;
   /** The decisive gig's satisfaction to reach (WIN by default); against the rival band. */
@@ -212,14 +217,15 @@ export const VENUES: readonly Venue[] = [
   {
     id: 'showcase',
     name: t('Le showcase du label'),
-    blurb: t('Un dénicheur de label au Paradiso : la salle doit suivre, et le jeu doit être propre (note A).'),
+    blurb: t('Un dénicheur de label au Paradiso : la salle doit suivre, sur des morceaux joués au moins aux deux tiers de leurs notes.'),
     act: 3,
     audience: [700, 800],
     fee: 1500,
     songs: 6,
     fans: 4500,
     decisive: true,
-    grade: 'A',
+    win: 0.65,
+    complete: 0.66,
     look: { scene: 'club', fill: 1.5, sign: 'PARADISO' },
   },
   {
@@ -241,7 +247,7 @@ export const VENUES: readonly Venue[] = [
     audience: [8000, 12000],
     fee: 4000,
     songs: 6,
-    fans: 8000,
+    fans: 30000,
     look: { scene: 'festival', fill: 0.9, sign: t('DUNES ÉLECTRIQUES') },
   },
   {
@@ -252,7 +258,7 @@ export const VENUES: readonly Venue[] = [
     audience: [12000, 16000],
     fee: 6000,
     songs: 6,
-    fans: 12000,
+    fans: 55000,
     look: { scene: 'festival', fill: 1.1, sign: t('VIEILLES PIERRES') },
   },
   {
@@ -263,7 +269,7 @@ export const VENUES: readonly Venue[] = [
     audience: [18000, 20000],
     fee: 8000,
     songs: 6,
-    fans: 15000,
+    fans: 90000,
     decisive: true,
     rival: true,
     win: RIVAL_TARGET,
@@ -288,7 +294,7 @@ export const VENUES: readonly Venue[] = [
     audience: [60000, 70000],
     fee: 25000,
     songs: 8,
-    fans: 60000,
+    fans: 200000,
     look: { scene: 'stade', fill: 1, sign: t('STADE DE LA CAPITALE') },
   },
   {
@@ -299,22 +305,22 @@ export const VENUES: readonly Venue[] = [
     audience: [75000, 85000],
     fee: 40000,
     songs: 8,
-    fans: 120000,
+    fans: 380000,
     look: { scene: 'stade', fill: 1.2, sign: 'LONDON' },
   },
   {
     id: 'derniere',
     name: t('La dernière date'),
-    blurb: t('Le dernier concert de la tournée, filmé pour l’histoire : public à 75 % et note A pour entrer au Hall of Fame.'),
+    blurb: t('Le dernier concert de la tournée, filmé pour l’histoire : public à 75 % et les morceaux joués à 80 % de leurs notes pour entrer au Hall of Fame.'),
     act: 5,
     audience: [90000, 90000],
     fee: 60000,
     songs: 8,
-    fans: 180000,
+    fans: 650000,
     decisive: true,
     final: true,
     win: 0.75,
-    grade: 'A',
+    complete: 0.8,
     look: { scene: 'stade', fill: 1.4, sign: t('DERNIÈRE DATE') },
   },
 ];
@@ -322,8 +328,9 @@ export const VENUES: readonly Venue[] = [
 export const WEEKS = 12;
 /** Satisfaction that wins a decisive gig. */
 export const WIN = 0.6;
-/** The crowd at the end of the setlist that calls the band back for an encore. */
-export const ENCORE = 0.8;
+/** The crowd at the end of the setlist that calls the band back for an encore: an evening to
+ * remember, not every one. */
+export const ENCORE = 0.85;
 /** A setlist lasts at least this long per song (s): no gig of short snippets. */
 export const MIN_SONG = 150;
 /** Notes per minute (judged, at the level played) worth a reward factor of 1. */
@@ -332,6 +339,8 @@ const OFFERS = 3;
 /** Slots of a week, and what a band rehearsal brings every song's form. */
 export const SLOTS = 3;
 const BAND_REHEARSAL = 0.15;
+/** Weeks at the start of a career when no member misses a gig. */
+const FULL_BAND_WEEKS = 2;
 /** News kept for the hub. */
 const NEWS = 5;
 const HISTORY = 40;
@@ -352,6 +361,8 @@ export interface GigSong {
   /** Notes and chords judged, and seconds played (the whole song unless cut short). */
   notes: number;
   seconds: number;
+  /** Notes and chords of the song at its full difficulty: how complete it was played. */
+  full?: number;
 }
 
 /** An encore played to the end, and what it paid on top. */
@@ -380,11 +391,17 @@ export interface GigRecord {
   missing: string[];
   /** Merch sold (€, in `money`). */
   merch: number;
+  /** Tour costs paid (€, out of `money`); none in saves of before. */
+  costs?: number;
+  /** A charity gig: its cause. */
+  charity?: string;
   /** Pauses taken during the gig. */
   pauses: number;
   /** The setlist's accuracy (by notes) and grade. */
   accuracy: number;
   grade: string;
+  /** The share of its songs' notes played (see `completeness`); none in saves of before. */
+  complete?: number;
   /** With the encore's. */
   fans: number;
   money: number;
@@ -423,6 +440,8 @@ export interface CareerStats {
   encores: number;
   /** Fees earned (€). */
   earned: number;
+  /** Charity gigs played. */
+  charity?: number;
 }
 
 export interface Career {
@@ -444,7 +463,7 @@ export interface Career {
   stats: CareerStats;
   /** The songs the band knows, and their form (see repertoire.ts); empty until first seeded. */
   repertoire: Repertoire;
-  /** This week's slots used: 'gig:<venue id>', 'rehearsal', 'rest'. */
+  /** This week's slots used: 'gig:<venue id>', 'rehearsal', 'studio', 'learn', 'rest'. */
   slots: string[];
   /** Gear bought for this career. */
   gear: GearId[];
@@ -466,6 +485,25 @@ export interface Career {
   band: Band | null;
   /** Newest first. */
   souvenirs: Souvenir[];
+  /** The guitarist's card (see skills.ts): measured on what is played, kept through a new career. */
+  skills: Skills;
+  /** The other bands of the scene, the awards won (see world.ts). */
+  world: World;
+  /** How much the band is talked about, 0..100 (see press.ts). */
+  hype: number;
+  /** A moment waiting for the player's choice (see press.ts). */
+  moment: Moment | null;
+  /** The sponsor of the moment (see manager.ts). */
+  sponsor: Sponsorship | null;
+  /** The label contract, chosen once the showcase is won (null before, and until chosen). */
+  contract: Contract | null;
+  /** Followers on the networks, and the week of the last post (see press.ts). */
+  followers: number;
+  posted: string | null;
+  /** A communications manager hired (see press.ts). */
+  comms: boolean;
+  /** A charity gig organised for this cause: among the week's offers until played or the week ends. */
+  charity: string | null;
 }
 
 /** A gig on this week's agenda. */
@@ -480,6 +518,10 @@ export interface Offer {
   headliner?: string;
   /** Taken by the rival band this week. */
   stolen?: boolean;
+  /** A headliner of the scene who invited the band to open their show (see world.ts). */
+  invited?: string;
+  /** A charity gig for this cause: no fee, the costs paid by the band, many fans. */
+  charity?: string;
 }
 
 /** One who made it: the band, how, when. */
@@ -517,10 +559,21 @@ export function newCareer(difficulty: Difficulty = 'pro'): Career {
     challenge: null,
     band: null,
     souvenirs: [],
+    skills: emptySkills(),
+    world: newWorld(),
+    hype: 40,
+    moment: null,
+    sponsor: null,
+    contract: null,
+    followers: 0,
+    posted: null,
+    comms: false,
+    charity: null,
   };
 }
 
-/** A career from scratch; the band, guitars, trophies and their counts, and the album stay. */
+/** A career from scratch; the band, guitars, trophies and their counts, the album and the
+ * guitarist's card stay. */
 export function resetCareer(c: Career, difficulty: Difficulty = c.difficulty): Career {
   return {
     ...newCareer(difficulty),
@@ -531,6 +584,7 @@ export function resetCareer(c: Career, difficulty: Difficulty = c.difficulty): C
     band: c.band,
     souvenirs: c.souvenirs,
     hallOfFame: c.hallOfFame,
+    skills: c.skills,
   };
 }
 
@@ -588,6 +642,7 @@ export function sanitizeCareer(raw: unknown): Career | null {
     cleanGigs: num(st.cleanGigs, 0, 1e9, 0),
     encores: num(st.encores, 0, 1e9, 0),
     earned: num(st.earned, 0, 1e12, history.reduce((t, r) => t + (r.money || 0), 0)),
+    ...(typeof st.charity === 'number' && st.charity > 0 ? { charity: num(st.charity, 0, 1e6, 0) } : {}),
   };
   return {
     version: 1,
@@ -626,6 +681,16 @@ export function sanitizeCareer(raw: unknown): Career | null {
           .map((x) => ({ ...x, name: VENUES.find((v) => v.id === x.venue)?.name ?? x.name, band: sanitizeBand(x.band), setlist: x.setlist.filter((s) => typeof s === 'string') }))
           .slice(0, ALBUM)
       : [],
+    skills: sanitizeSkills(c.skills),
+    world: sanitizeWorld(c.world),
+    hype: typeof c.hype === 'number' && Number.isFinite(c.hype) ? clampHype(c.hype) : 40,
+    moment: sanitizeMoment(c.moment),
+    sponsor: sanitizeSponsor(c.sponsor),
+    contract: sanitizeContract(c.contract),
+    followers: num(c.followers, 0, 1e10, 0),
+    posted: typeof c.posted === 'string' ? c.posted : null,
+    comms: c.comms === true,
+    charity: typeof c.charity === 'string' && c.charity in CAUSES ? c.charity : null,
   };
 }
 
@@ -705,7 +770,7 @@ export function offers(c: Career): Offer[] {
   const picked = open.slice(0, OFFERS).sort((a, b) => a.fans - b.fans);
   const decisive = VENUES.find((v) => v.act === act && v.decisive);
   if (decisive && c.act === act && c.fans >= decisive.fans) picked.push(decisive);
-  const pa = c.gear.includes('sono') ? PA_AUDIENCE : 1;
+  const pa = (c.gear.includes('sono') ? PA_AUDIENCE : 1) * (act === LAST_ACT && c.gear.includes('scene') ? STAGE_AUDIENCE : 1);
   // Audiences drawn for every venue picked, so a gig played leaves the others' unchanged.
   const list: Offer[] = picked.map((venue) => ({
     venue,
@@ -714,17 +779,31 @@ export function offers(c: Career): Offer[] {
   }));
   // The week's event lands on its first ordinary date; a cancelled headliner adds one.
   const event = weekEvent(c.season, c.week);
+  // One headliner's date and one invitation a week, whichever room they would now be in.
+  const done = (mark: string) => c.slots.some((s) => s.startsWith('gig:') && s.endsWith(mark));
   const plain = list.find((o) => !o.venue.decisive);
   if (plain && event === 'denicheur') plain.scout = true;
   if (plain && event === 'panne') plain.acoustic = true;
-  if (event === 'annulation') {
+  if (event === 'annulation' && !done('+')) {
     const big = [...open].sort((a, b) => b.fans - a.fans)[0];
     if (big) list.push({ venue: big, audience: Math.round(big.audience[1] * 2 * pa), songs: big.songs, headliner: headlinerOf(c.season, c.week) });
   }
   const stolen = stolenDate(c.season, c.week, list.filter((o) => !o.venue.decisive && !o.headliner).length);
   if (stolen !== null) list.filter((o) => !o.venue.decisive && !o.headliner)[stolen].stolen = true;
-  return list.filter((o) => !played.has(o.headliner ? `${o.venue.id}+` : o.venue.id));
+  // A headliner just above in the scene invites the band to open their show: the next room up
+  // (the biggest of the act once all are open), full, a crowd come for them.
+  const host = act <= LAST_ACT && !done('*') ? invitation(c.world, c.fans, c.season, c.week) : null;
+  const rooms = VENUES.filter((v) => v.act === act && !v.decisive).sort((a, b) => a.fans - b.fans);
+  const above = rooms.find((v) => c.fans < v.fans) ?? rooms[rooms.length - 1];
+  if (host && above) list.push({ venue: above, audience: Math.round(above.audience[1] * 1.2 * pa), songs: above.songs, invited: host });
+  // A charity gig the band organised this week: the biggest room open to it, full for the cause.
+  const own = [...open].sort((a, b) => b.audience[1] - a.audience[1])[0] ?? rooms[0];
+  if (c.charity && own) list.push({ venue: own, audience: Math.round(own.audience[1] * 1.3 * pa), songs: own.songs, charity: c.charity });
+  return list.filter((o) => !played.has(slotOf(o).slice(4)));
 }
+
+/** The slot a gig at `o` takes: its venue, a replaced headliner's or an opening act's its own date. */
+export const slotOf = (o: Offer): string => `gig:${o.venue.id}${o.headliner ? '+' : o.invited ? '*' : o.charity ? '#' : ''}`;
 
 /** Venues of the act still out of reach, the nearest first: what playing well opens. */
 export function lockedVenues(c: Career): Venue[] {
@@ -742,14 +821,17 @@ export function objective(c: Career): { text: string; progress: number } {
   if (c.fans < decisive.fans) {
     return { text: t('{n} fans pour jouer {venue}', { n: count(decisive.fans), venue }), progress: c.fans / decisive.fans };
   }
-  const vars = { venue, pct: Math.round((decisive.win ?? WIN) * 100), grade: decisive.grade ?? '', rival: RIVAL };
-  const grade = decisive.grade ? t(' et une note {grade} ou mieux', vars) : '';
+  const vars = { venue, pct: Math.round(decisiveTarget(c, decisive) * 100), notes: Math.round((decisive.complete ?? 0) * 100), rival: RIVAL };
+  const grade = decisive.complete ? t(', les morceaux joués à {notes} % de leurs notes', vars) : '';
   const rival = decisive.rival ? t(' : fais mieux que {rival}', vars) : '';
   return { text: t('Gagne {venue} : le public à {pct} % ou plus', vars) + grade + rival, progress: 1 };
 }
 
 /** A number as the interface language writes it: 4 500, 4,500. */
 const count = (n: number): string => n.toLocaleString(lang() === 'en' ? 'en-US' : 'fr-FR');
+
+/** The crowd a decisive gig at `venue` asks for, in this career's difficulty. */
+export const decisiveTarget = (c: Pick<Career, 'difficulty'>, venue: Venue): number => Math.min(0.95, (venue.win ?? WIN) + levelOf(c.difficulty).decisive);
 
 /** Shortest setlist a gig takes (s). */
 export const minSetlist = (offer: Offer): number => offer.songs * MIN_SONG;
@@ -765,6 +847,14 @@ export function effortOf(songs: readonly Pick<GigSong, 'notes' | 'seconds'>[]): 
   const total = songs.reduce((t, s) => t + s.seconds, 0);
   if (total <= 0) return 0.6;
   return songs.reduce((sum, s) => sum + songEffort(s) * s.seconds, 0) / total;
+}
+
+/** How complete a setlist was played: its notes judged against its songs' notes at full
+ * difficulty (1 when the songs do not say). */
+export function completeness(songs: readonly Pick<GigSong, 'notes' | 'full'>[]): number {
+  const known = songs.filter((s) => (s.full ?? 0) > 0);
+  if (!known.length) return 1;
+  return Math.min(1, known.reduce((t, s) => t + s.notes, 0) / known.reduce((t, s) => t + s.full!, 0));
 }
 
 /** A setlist's accuracy, each song weighted by its notes judged. */
@@ -813,10 +903,10 @@ export function reviewFor(venue: Venue, satisfaction: number, outcome: GigOutcom
 
 /** The press's word on a gig at `venue`: the rival who did better at the tremplin, the scout or
  * the last date that wanted a cleaner show, else as the crowd followed. */
-export function reviewOf(venue: Venue, gig: Pick<GigRecord, 'satisfaction' | 'outcome' | 'grade' | 'songs'>): string {
-  const { satisfaction, outcome, grade } = gig;
+export function reviewOf(venue: Venue, gig: Pick<GigRecord, 'satisfaction' | 'outcome' | 'complete' | 'songs'>, target = venue.win ?? WIN): string {
+  const { satisfaction, outcome } = gig;
+  const complete = gig.complete ?? 1;
   const played = outcome === 'played';
-  const target = venue.win ?? WIN;
   if (played && venue.rival && satisfaction < target) {
     return t('« {rival} ont mis {target} % du public dans leur poche, toi {pct} % : ils partent en tournée. Retente ta chance. »', {
       rival: RIVAL,
@@ -824,10 +914,11 @@ export function reviewOf(venue: Venue, gig: Pick<GigRecord, 'satisfaction' | 'ou
       pct: Math.round(satisfaction * 100),
     });
   }
-  if (played && venue.grade && satisfaction >= target && !gradeAtLeast(grade, venue.grade)) {
+  if (played && venue.complete && satisfaction >= target && complete < venue.complete) {
+    const vars = { need: Math.round(venue.complete * 100), pct: Math.round(complete * 100) };
     return venue.final
-      ? t('« Un concert immense, mais pas parfait : il fallait une note {need}, pas {grade}, pour entrer dans l’histoire. »', { need: venue.grade, grade })
-      : t('« Le dénicheur est reparti sans signer : la salle a suivi, mais il attendait une note {need}, pas {grade}. »', { need: venue.grade, grade });
+      ? t('« Un concert immense, mais allégé : il fallait jouer {need} % des notes, pas {pct} %, pour entrer dans l’histoire. »', vars)
+      : t('« Le dénicheur est reparti sans signer : la salle a suivi, mais il voulait les morceaux joués à {need} % au moins, pas {pct} %. »', vars);
   }
   const best = [...gig.songs].sort((a, b) => b.crowd - a.crowd)[0]?.title ?? null;
   return reviewFor(venue, satisfaction, outcome, best);
@@ -876,28 +967,159 @@ export const canGig = (c: Pick<Career, 'slots' | 'gear' | 'season' | 'week'>): b
  */
 export function restWeek(c: Career): Career {
   const slots = [...c.slots, ...Array.from({ length: slotsLeft(c) }, () => 'rest')];
-  const { members, gone } = departures(afterWeek(c.members, slots));
+  const act = playingAct(c);
+  const news: string[] = [];
+  let money = c.money;
+  let fans = c.fans;
+  let hype = hypeWeek(c.hype, c.comms);
+  // The professionals are paid every week, and the touring crew; late, they sulk.
+  const wages = payroll(c.members, act) + (c.gear.includes('equipe') ? crewWages(act) : 0) + (c.comms ? commsWage(act) : 0);
+  let worked = afterWeek(c.members, slots, c.gear.includes('bus') ? 0.025 : 0.05);
+  if (wages > 0) {
+    if (money >= wages) money -= wages;
+    else {
+      money = 0;
+      worked = worked.map((m) => ({ ...m, morale: Math.max(0, m.morale - 0.15) }));
+      news.push(t('Les salaires du groupe sont payés en retard : le moral en prend un coup.'));
+    }
+  }
+  const { members, gone } = departures(worked);
   const label = (m: Musician) => ROLES.find((r) => r.id === m.role)!.label.toLowerCase();
-  const news = gone.map((m) => t('{name} quitte le groupe pour {rival} : un remplaçant prend la {part}.', { name: m.name, rival: RIVAL, part: label(m) }));
-  // The season over: the label pays the objectives met.
-  const verdict = c.week >= WEEKS && signed(c) ? { season: c.season, ...seasonLabel(c, c.season) } : null;
-  return {
+  news.push(...gone.map((m) => t('{name} quitte le groupe pour {rival} : un remplaçant prend la {part}.', { name: m.name, rival: RIVAL, part: label(m) })));
+  // The sponsor pays the week; at the end of the deal, the bonus if its goal was met.
+  let sponsor = c.sponsor;
+  let world = worldWeek(c.world, c.season, c.week);
+  const rank = rankOf(sceneChart(world, c.band?.name ?? '', fans, weekIndex(c)));
+  if (sponsor) {
+    money += sponsor.pay;
+    sponsor = { ...sponsor, weeksLeft: sponsor.weeksLeft - 1 };
+    if (sponsor.weeksLeft <= 0) {
+      const met = sponsorMet(sponsor, { rank, card: overall(c.skills), fans });
+      if (met) money += sponsor.bonus;
+      news.push(met ? t('{brand} est ravi : objectif atteint, {money} € de prime.', { brand: sponsor.brand, money: count(sponsor.bonus) }) : t('Le contrat avec {brand} s’achève sans la prime.', { brand: sponsor.brand }));
+      sponsor = null;
+    }
+  }
+  // The season over: the label pays the objectives met (not to a band that produces itself), the
+  // scene gives its awards.
+  const verdict = c.week >= WEEKS && signed(c) && c.contract?.objectives !== false && c.contract?.from !== c.season ? { season: c.season, ...seasonLabel(c, c.season) } : null;
+  if (c.week >= WEEKS) {
+    const season = c.history.filter((r) => r.season === c.season && r.outcome === 'played');
+    const albums = c.album.released.filter((a) => a.season === c.season);
+    const won = seasonAwards(world, {
+      rank,
+      bestSatisfaction: Math.max(0, ...season.map((r) => r.satisfaction)),
+      fans,
+      album: Math.max(0, ...albums.map((a) => a.quality)),
+    });
+    for (const id of won) {
+      const prize = 500 * act * act;
+      money += prize;
+      fans = Math.round(fans * 1.05);
+      hype = clampHype(hype + 10);
+      news.push(t('{award} : la scène te récompense ({money} €, des fans en plus).', { award: AWARDS[id], money: count(prize) }));
+    }
+    world = { ...world, awards: [...won.map((id) => ({ season: c.season, id })), ...world.awards], seasonStart: fans };
+  } else if (!world.seasonStart) world = { ...world, seasonStart: Math.max(1, fans) };
+  const next: Career = {
     ...c,
     ...nextWeek(c),
     report: reportAfter(c),
     slots: [],
     members,
     news: [...news, ...c.news].slice(0, NEWS),
-    money: c.money + (verdict?.bonus ?? 0),
+    money: money + (verdict?.bonus ?? 0),
+    fans,
+    hype,
+    sponsor,
+    world,
+    followers: followersWeek(c.followers, fans, hype),
+    charity: null,
     labelReport: verdict ?? c.labelReport,
   };
+  return { ...next, moment: c.moment ?? momentFor(next) };
 }
 
-/** A studio take of `id` at `quality` (its accuracy), a slot of the week: the best take of each
- * song is kept for the next album. */
+/** The moment the week brings, if any: a quarrel when morale is low, a musician the rival
+ * wants, a rival label's offer, a good cause, an interview. */
+function momentFor(c: Career): Moment | null {
+  const act = playingAct(c);
+  const morale = c.members.reduce((t, m) => t + m.morale, 0) / c.members.length;
+  if (morale < 0.45 && momentRoll('dispute', c.season, c.week, 0.5)) {
+    const [a, b] = [...c.members].sort((x, y) => x.morale - y.morale);
+    return dispute(a.name, b.name);
+  }
+  const star = [...c.members].sort((x, y) => y.precision - x.precision)[0];
+  if (act >= 3 && star.precision >= 70 && momentRoll('debauchage', c.season, c.week, 0.08)) return poaching(star.name, 0.5, 300 * act * act);
+  if (c.contract && c.contract.id !== 'autoprod' && momentRoll('offre', c.season, c.week, 0.07)) return rivalLabel(2000 * act * act);
+  if (act >= 2 && momentRoll('cause', c.season, c.week, 0.12)) return goodCause(c.season, c.week, act);
+  if (act >= 2 && momentRoll('interview', c.season, c.week, c.comms ? 0.4 : 0.25)) return interview(c.season, c.week, c.comms);
+  return null;
+}
+
+/** A choice made in the moment waiting: its effects, the moment gone. */
+export function resolveMoment(c: Career, choice: string): Career {
+  const picked = c.moment?.choices.find((x) => x.id === choice);
+  if (!picked) return c;
+  const e = picked.effect;
+  let members = c.members.map((m) => ({ ...m, morale: Math.min(1, Math.max(0, m.morale + (e.morale ?? 0))) }));
+  for (const x of e.members ?? []) members = members.map((m) => (m.name === x.name ? { ...m, morale: Math.min(1, Math.max(0, m.morale + x.morale)) } : m));
+  if (e.raise) members = members.map((m) => (m.name === e.raise!.name ? { ...m, raise: (m.raise ?? 0) + e.raise!.share } : m));
+  if (e.leaves) members = members.map((m) => (m.name === e.leaves ? { ...departures([{ ...m, morale: 0 }]).members[0] } : m));
+  // Another label: a better share of the sales, no bonus from this season's objectives.
+  const contract = e.betterDeal && c.contract ? { ...c.contract, royalty: Math.min(0.7, c.contract.royalty + e.betterDeal), from: c.season } : c.contract;
+  const out: Career = {
+    ...c,
+    members,
+    moment: null,
+    contract,
+    hype: clampHype(c.hype + (e.hype ?? 0)),
+    money: Math.max(0, c.money + (e.money ?? 0)),
+    fans: c.fans + (e.fans ?? 0),
+    followers: c.followers + (e.followers ?? 0),
+    charity: e.charity ?? c.charity,
+  };
+  return e.rest && slotsLeft(out) > 0 ? useSlot(out, 'rest') : out;
+}
+
+/** This week's post on the networks (one a week): behind the scenes for free, a music video for a
+ * price; null when posted already or the video too dear. */
+export function post(c: Career, kind: PostKind): Career | null {
+  const key = `${c.season}-${c.week}`;
+  const cost = kind === 'clip' ? clipCost(playingAct(c)) : 0;
+  if (c.posted === key || c.money < cost) return null;
+  const e = postEffect(kind, c.followers, c.fans, c.comms, c.hype);
+  return { ...c, posted: key, money: c.money - cost, followers: c.followers + e.followers, fans: c.fans + e.fans, hype: clampHype(c.hype + e.hype) };
+}
+
+/** A communications manager hired (from the clubs on: paid every week) or let go. */
+export const hireComms = (c: Career): Career => (commsWage(playingAct(c)) > 0 ? { ...c, comms: true } : c);
+export const fireComms = (c: Career): Career => ({ ...c, comms: false });
+
+/** A training drill played: a slot of the week. */
+export const trainSlot = (c: Career): Career => (slotsLeft(c) > 0 ? useSlot(c, 'training') : c);
+
+/** The sponsor `o` signed (one at a time). */
+export const acceptSponsor = (c: Career, o: SponsorOffer): Career => (c.sponsor ? c : { ...c, sponsor: startSponsor(o, c.fans) });
+
+/** The label contract `id` signed: its advance paid. */
+export function signContract(c: Career, id: LabelId): Career {
+  if (c.contract || !signed(c)) return c;
+  const contract = contractOf(id);
+  return { ...c, contract, money: c.money + contract.advance };
+}
+
+/** A studio take of `id` at `quality` (its accuracy): a session, a slot of the week, records two
+ * (three in the band's own studio, each a little better); the best take of each song is kept for
+ * the next album. */
 export function studioTake(c: Career, id: string, quality: number): Career {
+  const own = c.gear.includes('studio');
+  const take = Math.min(1, quality + (own ? OWN_STUDIO_BONUS : 0));
+  // A session paid has takes left: free; else a new session, a slot of the week.
+  const left = c.album.session ?? 0;
+  if (left > 0) return { ...c, album: { ...recordTake(c.album, id, take), session: left - 1 } };
   if (slotsLeft(c) <= 0) return c;
-  return useSlot({ ...c, album: recordTake(c.album, id, quality) }, 'studio');
+  return useSlot({ ...c, album: { ...recordTake(c.album, id, take), session: (own ? OWN_STUDIO_TAKES : SESSION_TAKES) - 1 } }, 'studio');
 }
 
 /** The album out (eight songs recorded at least): copies sold by its quality and the band's fans,
@@ -905,14 +1127,16 @@ export function studioTake(c: Career, id: string, quality: number): Career {
 export function releaseAlbum(c: Career, when = new Date()): { career: Career; release: Release } | null {
   if (Object.keys(c.album.takes).length < ALBUM_TRACKS) return null;
   const quality = albumQuality(c.album);
-  const copies = albumSales(c.fans, quality);
+  // The label's promotion sells more copies; the band gets its share of each.
+  const contract = c.contract ?? contractOf('independant');
+  const copies = Math.round(albumSales(c.fans, quality) * contract.promotion);
   const release: Release = { name: `Album ${c.album.released.length + 1}`, season: c.season, quality, copies, date: when.toISOString() };
   return {
     career: {
       ...c,
-      money: c.money + copies * 2,
+      money: c.money + Math.round(copies * PRICE * contract.royalty),
       fans: c.fans + Math.round(copies * 0.15),
-      album: { takes: {}, released: [...c.album.released, release] },
+      album: { takes: {}, released: [...c.album.released, release], ...(c.album.session ? { session: c.album.session } : {}) },
     },
     release,
   };
@@ -922,6 +1146,12 @@ export function releaseAlbum(c: Career, when = new Date()): { career: Career; re
 function useSlot(c: Career, slot: string): Career {
   const next = { ...c, slots: [...c.slots, slot] };
   return slotsLeft(next) > 0 ? next : restWeek(next);
+}
+
+/** Song `id` learned: a slot of the week (the band works it up from scratch); null without one. */
+export function learnSong(c: Career, id: string): Career | null {
+  if (slotsLeft(c) <= 0 || id in c.repertoire) return null;
+  return useSlot({ ...c, repertoire: learn(c.repertoire, id, weekIndex(c)) }, 'learn');
 }
 
 /** A slot of rest: morale up at the end of the week. */
@@ -949,6 +1179,8 @@ export function hireMusician(c: Career, m: Candidate): Career | null {
 
 /** The line-up of gig `offer` this week (an unreliable member may miss it: a stand-in plays). */
 export function gigLineUp(c: Career, offer: Offer): { members: Musician[]; missing: Musician[] } {
+  // The first gigs, everyone is there.
+  if (weekIndex(c) <= FULL_BAND_WEEKS) return { members: [...c.members], missing: [] };
   const night = lineUp(c.members, `${c.season}-${c.week}-${offer.venue.id}`);
   if (weekEvent(c.season, c.week) !== 'malade') return night;
   // The drummer is sick all week.
@@ -988,8 +1220,10 @@ export const guitarsOf = (c: Pick<Career, 'gear'>): number => (c.gear.includes('
  * band and the tube amp. */
 export function crowdStart(c: Career, offer: Offer): number {
   // A crowd come for another band starts colder; so does one without power.
-  const base = (offer.venue.opening ? 0.3 : 0.5) - (offer.headliner ? 0.15 : 0) - (offer.acoustic ? 0.08 : 0);
-  return Math.min(0.9, Math.max(0.1, base + crowdBoost(gigLineUp(c, offer).members) + (c.gear.includes('ampli') ? AMP_WARMTH : 0)));
+  const base = (offer.venue.opening ? 0.3 : 0.5) - (offer.headliner ? 0.15 : 0) - (offer.invited ? 0.12 : 0) - (offer.acoustic ? 0.08 : 0) + (offer.charity ? 0.1 : 0);
+  const gear =
+    (c.gear.includes('ampli') ? AMP_WARMTH : 0) + (c.gear.includes('ecrans') ? SCREENS_WARMTH : 0) + (offer.venue.act === LAST_ACT && c.gear.includes('scene') ? STAGE_WARMTH : 0);
+  return Math.min(0.9, Math.max(0.1, base + crowdBoost(gigLineUp(c, offer).members) + gear + hypeWarmth(c.hype)));
 }
 
 export interface SeasonSummary {
@@ -1031,23 +1265,36 @@ export function concludeGig(
   // The setlist's form as it went on stage (a song outside the repertoire counts as neutral).
   const now = weekIndex(c);
   const form = formFactor(songs.map((s) => (c.repertoire[s.id] ? formOf(c.repertoire[s.id], now) : 0.6)));
-  const bonus = played && extra.encore ? encoreBonus(offer, extra.encore) : null;
+  const encoreBase = played && extra.encore ? encoreBonus(offer, extra.encore) : null;
+  // The pyrotechnics double what an encore brings.
+  const blaze = c.gear.includes('pyro') ? 2 : 1;
+  const bonus = encoreBase && { fans: encoreBase.fans * blaze, money: encoreBase.money * blaze };
   const encore: Encore | null = bonus && extra.encore ? { title: extra.encore.title, crowd: extra.encore.crowd, ...bonus } : null;
   // The band of the night: its precision weighs on fans and fee.
   const night = gigLineUp(c, offer);
   const band = bandFactor(night.members);
   const merch = played && c.gear.includes('merch') ? merchSales(offer.audience, satisfaction) : 0;
-  // The career's difficulty pays; a scout in the room doubles the fans, a headliner replaced the fee.
+  // The career's difficulty pays (fees, not fans: a harder career is not a shorter one); a scout in
+  // the room doubles the fans, a headliner replaced the fee.
   const reward = levelOf(c.difficulty).reward;
-  const fans = Math.round((fansFor(offer.audience, satisfaction, outcome, effort * form * band * reward) + (bonus?.fans ?? 0)) * (offer.scout && played ? 2 : 1));
-  const money = (played ? feeFor(offer.venue, satisfaction, effort * form * band * reward * (offer.headliner ? 2 : 1)) : 0) + (bonus?.money ?? 0) + merch;
+  // Hype turns more of a crowd into fans; opening for a headliner shows the band to a crowd that
+  // never saw it (more fans, a small fee).
+  // A charity gig: no fee, its costs paid by the band, a crowd that tells everyone.
+  const charity = !!offer.charity;
+  const fans = Math.round((fansFor(offer.audience, satisfaction, outcome, effort * form * band * hypeFans(c.hype) * (offer.invited ? 1.3 : 1) * (charity ? 1.6 : 1)) + (bonus?.fans ?? 0)) * (offer.scout && played ? 2 : 1));
+  const pay = (played && !charity ? feeFor(offer.venue, satisfaction, effort * form * band * reward * (offer.headliner ? 2 : offer.invited ? 0.6 : 1)) : 0) + (bonus?.money ?? 0);
+  // Big venues cost: crew, trucks, hotels (halved with the band's own crew); a charity gig its
+  // organisation.
+  const costs = charity ? charityCost(offer.venue.act) : tourCosts(offer.venue.act, pay, c.gear.includes('equipe'));
+  const money = pay - costs + merch;
   // Every song played on stage is back in form.
   let repertoire = c.repertoire;
   for (const s of extra.encore ? [...songs, extra.encore] : songs) repertoire = rehearse(repertoire, s.id, now, STAGE);
   const accuracy = gigAccuracy(songs);
   const grade = gradeFor(accuracy, songs.reduce((t, s) => t + s.notes, 0));
-  const clean = !offer.venue.grade || gradeAtLeast(grade, offer.venue.grade);
-  const target = offer.venue.win ?? WIN;
+  const complete = completeness(songs);
+  const clean = !offer.venue.complete || complete >= offer.venue.complete - 1e-9;
+  const target = decisiveTarget(c, offer.venue);
   const actUp = played && !!offer.venue.decisive && offer.venue.act === c.act && satisfaction >= target && clean;
   const record: GigRecord = {
     venue: offer.venue.name,
@@ -1061,14 +1308,17 @@ export function concludeGig(
     band,
     missing: night.missing.map((m) => m.name),
     merch,
+    costs,
+    ...(offer.charity ? { charity: offer.charity } : {}),
     pauses: extra.pauses ?? 0,
     accuracy,
     grade,
+    complete,
     fans,
     money,
     songs,
     encore,
-    review: reviewOf(offer.venue, { satisfaction, outcome, grade, songs }),
+    review: reviewOf(offer.venue, { satisfaction, outcome, complete, songs }, target),
   };
   const souvenir: Souvenir = {
     venue: offer.venue.id,
@@ -1091,14 +1341,22 @@ export function concludeGig(
     cleanGigs: c.stats.cleanGigs + (played && !extra.pauses ? 1 : 0),
     encores: c.stats.encores + (encore ? 1 : 0),
     earned: c.stats.earned + money,
+    ...(c.stats.charity || (charity && played) ? { charity: (c.stats.charity ?? 0) + (charity && played ? 1 : 0) } : {}),
   };
   // The last date won: into the Hall of Fame.
   const hall: HallEntry[] =
     actUp && offer.venue.final
       ? [...c.hallOfFame, { band: c.band?.name ?? t('Le groupe'), difficulty: c.difficulty, season: c.season, fans: Math.max(0, c.fans + fans), date: (extra.when ?? new Date()).toISOString() }]
       : c.hallOfFame;
+  // The sponsor counts the gigs it asked for; a crowd on fire may go viral.
+  const sponsor = c.sponsor && c.sponsor.goal === 'gigs' && played && satisfaction >= (c.sponsor.crowd ?? 0.7) ? { ...c.sponsor, done: c.sponsor.done + 1 } : c.sponsor;
+  const goesViral = played && satisfaction >= 0.97 && c.hype < 85 && !c.moment && momentRoll('viral', c.season, c.week, 0.12);
   const after: Career = {
     ...c,
+    hype: clampHype(hypeAfterGig(c.hype, satisfaction, outcome === 'booed') + (charity && played ? 10 : 0)),
+    sponsor,
+    moment: goesViral ? viral(Math.max(0, c.fans + fans)) : c.moment,
+    charity: charity ? null : c.charity,
     hallOfFame: hall,
     act: actUp ? c.act + 1 : c.act,
     fans: Math.max(0, c.fans + fans),
@@ -1110,5 +1368,5 @@ export function concludeGig(
     souvenirs: [souvenir, ...c.souvenirs].slice(0, ALBUM),
   };
   // A replaced headliner is its own date in the week.
-  return { career: useSlot(after, `gig:${offer.venue.id}${offer.headliner ? '+' : ''}`), record, actUp, souvenir };
+  return { career: useSlot(after, slotOf(offer)), record, actUp, souvenir };
 }

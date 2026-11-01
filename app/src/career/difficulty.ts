@@ -17,20 +17,23 @@ export interface Level {
   freePauses: number;
   /** Seconds of a cold room before the band is booed off. */
   patience: number;
-  /** Factor on fans and fee. */
+  /** Factor on the fees (not the fans: a harder career is not a shorter one). */
   reward: number;
+  /** Added to the crowd a decisive gig asks for: a Rookie gets through a little colder room. */
+  decisive: number;
 }
 
 export const DIFFICULTIES: readonly Level[] = [
   {
     id: 'rookie',
     label: 'Rookie',
-    blurb: t('Un public patient : la première pause de chaque concert est gratuite, un accordage refroidit deux fois moins, les sifflets attendent 30 s. Gains ×0,8.'),
+    blurb: t('Un public patient : la première pause de chaque concert est gratuite, un accordage refroidit deux fois moins, les sifflets attendent 30 s, les dates décisives demandent 8 points de public en moins. Cachets ×0,8.'),
     pause: 0.08,
     retune: 0.06,
     freePauses: 1,
     patience: 30,
     reward: 0.8,
+    decisive: -0.08,
   },
   {
     id: 'pro',
@@ -41,16 +44,18 @@ export const DIFFICULTIES: readonly Level[] = [
     freePauses: 0,
     patience: 20,
     reward: 1,
+    decisive: 0,
   },
   {
     id: 'legende',
     label: t('Légende'),
-    blurb: t('Un public impitoyable : pauses et accordages coûtent plus cher, la salle siffle au bout de 12 s. Gains ×1,25.'),
+    blurb: t('Un public impitoyable : pauses et accordages coûtent plus cher, la salle siffle au bout de 12 s, les dates décisives demandent 5 points de public en plus. Cachets ×1,25.'),
     pause: 0.12,
     retune: 0.18,
     freePauses: 0,
     patience: 12,
     reward: 1.25,
+    decisive: 0.05,
   },
 ];
 

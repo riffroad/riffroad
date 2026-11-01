@@ -48,8 +48,7 @@ export const CAREER: Record<string, string> = {
   'Le club mythique de la ville : y jouer complet, c’est entrer dans la cour des grands.': 'The city’s legendary club: sell it out and you’re in the big leagues.',
   'LA MACHINE': 'THE MACHINE',
   'Le showcase du label': 'The label showcase',
-  'Un dénicheur de label au Paradiso : la salle doit suivre, et le jeu doit être propre (note A).':
-    'A label scout at the Paradiso: the crowd has to follow, and the playing has to be clean (grade A).',
+  'Un dénicheur de label au Paradiso : la salle doit suivre, sur des morceaux joués au moins aux deux tiers de leurs notes.': 'A label scout at the Paradiso: the crowd must follow, on songs played with at least two thirds of their notes.',
   'Le Festival de la Plage': 'The Beach Festival',
   'Une scène les pieds dans le sable, le premier grand festival de l’été.': 'A stage with its feet in the sand, the first big festival of the summer.',
   'FESTIVAL DE LA PLAGE': 'BEACH FESTIVAL',
@@ -72,15 +71,14 @@ export const CAREER: Record<string, string> = {
   'Le stade de Londres': 'The London stadium',
   'La tournée passe la Manche : 80 000 voix dans un stade mythique.': 'The tour crosses the Channel: 80,000 voices in a legendary stadium.',
   'La dernière date': 'The final show',
-  'Le dernier concert de la tournée, filmé pour l’histoire : public à 75 % et note A pour entrer au Hall of Fame.':
-    'The last show of the tour, filmed for history: 75% of the crowd and an A grade to enter the Hall of Fame.',
+  'Le dernier concert de la tournée, filmé pour l’histoire : public à 75 % et les morceaux joués à 80 % de leurs notes pour entrer au Hall of Fame.': 'The tour’s last show, filmed for history: a crowd at 75% and songs played with 80% of their notes to enter the Hall of Fame.',
   'DERNIÈRE DATE': 'FINAL SHOW',
 
   // career.ts: the act's objective
   '{act} : la tournée est finie. Les stades te réclament encore.': '{act}: the tour is over. The stadiums still want you.',
   '{n} fans pour jouer {venue}': '{n} fans to play {venue}',
   'Gagne {venue} : le public à {pct} % ou plus': 'Win {venue}: {pct}% of the crowd or more',
-  ' et une note {grade} ou mieux': ' and a grade of {grade} or better',
+  ', les morceaux joués à {notes} % de leurs notes': ', songs played with {notes}% of their notes',
   ' : fais mieux que {rival}': ', and beat {rival}',
 
   // career.ts: the reviews
@@ -94,10 +92,8 @@ export const CAREER: Record<string, string> = {
   'le premier morceau': 'the first song',
   '« {rival} ont mis {target} % du public dans leur poche, toi {pct} % : ils partent en tournée. Retente ta chance. »':
     '“{rival} won over {target}% of the crowd, you {pct}%: they’re going on tour. Try again.”',
-  '« Un concert immense, mais pas parfait : il fallait une note {need}, pas {grade}, pour entrer dans l’histoire. »':
-    '“A huge show, but not a perfect one: it took a grade of {need}, not {grade}, to make history.”',
-  '« Le dénicheur est reparti sans signer : la salle a suivi, mais il attendait une note {need}, pas {grade}. »':
-    '“The scout left without signing you: the crowd followed, but he wanted a grade of {need}, not {grade}.”',
+  '« Un concert immense, mais allégé : il fallait jouer {need} % des notes, pas {pct} %, pour entrer dans l’histoire. »': '“A huge show, but a lighter one: it took {need}% of the notes, not {pct}%, to make history.”',
+  '« Le dénicheur est reparti sans signer : la salle a suivi, mais il voulait les morceaux joués à {need} % au moins, pas {pct} %. »': '“The scout left without signing: the crowd followed, but he wanted the songs played with at least {need}% of their notes, not {pct}%.”',
 
   // career.ts: the week and the gig
   '{name} quitte le groupe pour {rival} : un remplaçant prend la {part}.': '{name} leaves the band for {rival}: a stand-in takes over on {part}.',
@@ -142,6 +138,19 @@ export const CAREER: Record<string, string> = {
   'Sono de tournée': 'Touring PA',
   'Plus de puissance, plus de monde : 15 % de public en plus à chaque date.': 'More power, more people: 15% bigger crowds at every show.',
   'Le van': 'The van',
+  'L’équipe de tournée': 'The touring crew',
+  'Roadies, régisseur et camions à toi : les frais de tournée des grandes salles divisés par deux. L’équipe est payée chaque semaine (1 500 € aux festivals, 3 000 € dans les stades).':
+    'Your own roadies, stage manager and trucks: the tour costs of big venues halved. The crew is paid every week (€1,500 at the festivals, €3,000 in the stadiums).',
+  'Le bus de tournée': 'The tour bus',
+  'Couchettes, cuisine et console de jeux : enchaîner les dates fatigue deux fois moins le groupe.': 'Bunks, a kitchen and a game console: back-to-back dates tire the band half as much.',
+  'Ton propre studio': 'Your own studio',
+  'Trois prises par séance au lieu de deux, et chacune sonne 5 points mieux sur l’album.': 'Three takes a session instead of two, each 5 points better on the album.',
+  'La scène des stades': 'The stadium stage',
+  'Une scène géante en tournée : dans les stades, 10 % de public en plus, qui démarre 5 points plus chaud.': 'A giant touring stage: in the stadiums, 10% more people, starting 5 points warmer.',
+  'Les écrans géants': 'The giant screens',
+  'Toi en grand au fond de la scène : jusqu’au dernier rang, le public démarre 5 points plus chaud.': 'You, huge, at the back of the stage: down to the last row, the crowd starts 5 points warmer.',
+  'La pyrotechnie': 'The pyrotechnics',
+  'Flammes et étincelles sur le dernier accord : un rappel rapporte deux fois plus de fans et de cachet.': 'Flames and sparks on the last chord: an encore brings twice the fans and fee.',
   'Le groupe et le matos sur la route : deux concerts par semaine au lieu d’un.': 'The band and the gear on the road: two gigs a week instead of one.',
 
   // musicians.ts
@@ -155,12 +164,12 @@ export const CAREER: Record<string, string> = {
   'prêt à partir': 'ready to quit',
 
   // difficulty.ts
-  'Un public patient : la première pause de chaque concert est gratuite, un accordage refroidit deux fois moins, les sifflets attendent 30 s. Gains ×0,8.':
-    'A patient crowd: the first pause of each gig is free, retuning cools the room half as much, booing waits 30 s. Rewards ×0.8.',
+  'Un public patient : la première pause de chaque concert est gratuite, un accordage refroidit deux fois moins, les sifflets attendent 30 s, les dates décisives demandent 8 points de public en moins. Cachets ×0,8.':
+    'A patient crowd: the first pause of each gig is free, retuning cools the room half as much, booing waits 30 s, decisive dates ask for 8 points less of the crowd. Fees ×0.8.',
   'Les règles de base : chaque pause et chaque accordage refroidissent la salle, les sifflets au bout de 20 s.': 'The base rules: every pause and every retuning cools the room, booing after 20 s.',
   Légende: 'Legend',
-  'Un public impitoyable : pauses et accordages coûtent plus cher, la salle siffle au bout de 12 s. Gains ×1,25.':
-    'A merciless crowd: pauses and retunings cost more, the room boos after 12 s. Rewards ×1.25.',
+  'Un public impitoyable : pauses et accordages coûtent plus cher, la salle siffle au bout de 12 s, les dates décisives demandent 5 points de public en plus. Cachets ×1,25.':
+    'A merciless crowd: pauses and retunings cost more, the room boos after 12 s, decisive dates ask for 5 points more of the crowd. Fees ×1.25.',
 
   // challenge.ts
   Argent: 'Silver',

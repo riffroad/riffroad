@@ -3,9 +3,10 @@
  * One file per part of the app.
  */
 import { CAREER } from './career';
+import { CAREER_SCENE } from './career-scene';
 import { CAREER_SCREEN } from './career-screen';
 import { LESSONS } from './lessons';
 import { MAIN } from './main';
 import { SCREENS } from './screens';
 
-export const EN: Record<string, string> = { ...MAIN, ...SCREENS, ...CAREER, ...CAREER_SCREEN, ...LESSONS };
+export const EN: Record<string, string> = { ...MAIN, ...SCREENS, ...CAREER, ...CAREER_SCREEN, ...CAREER_SCENE, ...LESSONS };

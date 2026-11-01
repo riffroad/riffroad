@@ -36,7 +36,7 @@ function weekWith(e: WeekEvent): { season: number; week: number } {
 
 describe('acts 4 and 5', () => {
   it('sends the band past the rival at the tremplin, or not', () => {
-    const c = steady({ ...newCareer(), act: 4, fans: 16000 });
+    const c = steady({ ...newCareer(), act: 4, fans: 91000 });
     expect(objective(c).text).toContain('Les Vautours');
     const lost = concludeGig(c, offer('tremplin', 19000), songs(0.72, 0.72), 'played');
     expect(lost.actUp).toBe(false);
@@ -46,11 +46,11 @@ describe('acts 4 and 5', () => {
     expect(offers({ ...won.career, fans: 0 }).every((o) => o.venue.act === 5)).toBe(true);
   });
 
-  it('puts the band in the Hall of Fame for a last date won at 75 % with an A', () => {
+  it('puts the band in the Hall of Fame for a last date won at 75 %, its songs played at 80 % of their notes', () => {
     const c = steady({ ...newCareer(), act: 5, fans: 200000, band: { name: 'Les Larsen', emblem: 'crane', lettering: 'metal', palette: 0 } });
-    const sloppy = concludeGig(c, offer('derniere', 90000), songs(0.9).map((s) => ({ ...s, accuracy: 0.85 })), 'played');
-    expect(sloppy.actUp).toBe(false);
-    expect(sloppy.record.review).toContain('histoire');
+    const lighter = concludeGig(c, offer('derniere', 90000), songs(0.9).map((s) => ({ ...s, full: 800 })), 'played');
+    expect(lighter.actUp).toBe(false);
+    expect(lighter.record.review).toContain('histoire');
     const won = concludeGig(c, offer('derniere', 90000), songs(0.9), 'played');
     expect(won.career.act).toBe(6);
     expect(won.career.hallOfFame).toEqual([expect.objectContaining({ band: 'Les Larsen', difficulty: 'pro', season: 1 })]);
@@ -150,8 +150,9 @@ describe('the label', () => {
     expect(releaseAlbum(c)).toBeNull();
     for (let i = 0; i < ALBUM_TRACKS; i++) c = { ...c, album: { ...c.album, takes: { ...c.album.takes, [`t${i}`]: 0.9 } } };
     const out = releaseAlbum(c)!;
+    // Without a contract chosen, an independent label's terms: 30 % of 10 € a copy.
     expect(out.release.copies).toBe(albumSales(c.fans, 0.9));
-    expect(out.career.money).toBe(c.money + out.release.copies * 2);
+    expect(out.career.money).toBe(c.money + Math.round(out.release.copies * 10 * 0.3));
     expect(out.career.fans).toBe(c.fans + Math.round(out.release.copies * 0.15));
     expect(out.career.album).toEqual({ takes: {}, released: [out.release] });
     expect(careerTrophies(out.career, null)).toContain('album');
@@ -162,9 +163,16 @@ describe('difficulty', () => {
   it('pays a Legend more than a Pro, a Rookie less', () => {
     const o = offer('zinc', 100);
     const fee = (d: 'rookie' | 'pro' | 'legende') => concludeGig(steady({ ...newCareer(d), act: 2, fans: 200 }), o, songs(0.8), 'played').record;
-    expect(fee('legende').fans).toBeGreaterThan(fee('pro').fans);
+    // Fees only: a harder career pays more, it does not go faster.
+    expect(fee('legende').money).toBeGreaterThan(fee('pro').money);
+    expect(fee('legende').fans).toBe(fee('pro').fans);
+    expect(fee('rookie').fans).toBe(fee('pro').fans);
     expect(fee('rookie').money).toBeLessThan(fee('pro').money);
     expect(levelOf('rookie').freePauses).toBe(1);
+    // A Rookie gets through a decisive date a little colder, a Legend needs it warmer.
+    const lycee = offer('lycee', 80);
+    const at = (d: 'rookie' | 'pro' | 'legende', crowd: number) => concludeGig(steady({ ...newCareer(d), act: 1, fans: 60 }), lycee, songs(crowd, crowd, crowd), 'played').actUp;
+    expect([at('rookie', 0.55), at('pro', 0.55), at('pro', 0.62), at('legende', 0.62), at('legende', 0.66)]).toEqual([true, false, true, false, true]);
     expect(levelOf('legende').patience).toBeLessThan(levelOf('pro').patience);
   });
 });

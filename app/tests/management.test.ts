@@ -20,7 +20,7 @@ import {
   type Career,
   type GigSong,
 } from '../src/career/career';
-import { merchSales } from '../src/career/gear';
+import { merchSales, tourCosts } from '../src/career/gear';
 import { afterGig, afterWeek, bandFactor, crowdBoost, departures, lineUp, market, sanitizeMembers, startingBand, type Musician } from '../src/career/musicians';
 
 const songs = (...crowds: number[]): GigSong[] =>
@@ -90,6 +90,29 @@ describe('the gear', () => {
   });
 });
 
+describe('the big venues', () => {
+  const stars: Career = steady({ ...newCareer(), act: 5, fans: 100000, money: 200000 });
+  const stadium = { venue: VENUES.find((v) => v.id === 'sud')!, audience: 45000, songs: 7 };
+
+  it('cost a share of what they pay, more as they grow, half with the band’s own crew', () => {
+    expect([1, 2, 3, 4, 5].map((act) => tourCosts(act, 10000, false))).toEqual([0, 0, 1500, 3000, 4000]);
+    expect(tourCosts(5, 10000, true)).toBe(2000);
+    const own = concludeGig(stars, stadium, songs(0.9), 'played').record;
+    const crew = concludeGig(buyGear(stars, 'equipe')!, stadium, songs(0.9), 'played').record;
+    expect(own.costs).toBeGreaterThan(0);
+    expect(crew.costs).toBeCloseTo(own.costs! / 2, -1);
+    expect(crew.money).toBeGreaterThan(own.money);
+  });
+
+  it('have their own gear: screens warm the crowd, pyrotechnics double an encore', () => {
+    expect(crowdStart(buyGear(stars, 'ecrans')!, stadium) - crowdStart(stars, stadium)).toBeCloseTo(0.05);
+    const encore = { ...songs(0.95)[0], id: 'encore' };
+    const plain = concludeGig(stars, stadium, songs(0.95), 'played', { encore }).record.encore!;
+    const blaze = concludeGig(buyGear(stars, 'pyro')!, stadium, songs(0.95), 'played', { encore }).record.encore!;
+    expect([blaze.fans, blaze.money]).toEqual([plain.fans * 2, plain.money * 2]);
+  });
+});
+
 describe('the musicians', () => {
   const ace: Musician = { name: 'Ace', role: 'batterie', precision: 90, energy: 90, reliability: 100, morale: 1 };
 
@@ -115,13 +138,14 @@ describe('the musicians', () => {
     expect(gigLineUp(bars, o).missing).toEqual([]);
   });
 
-  it('gain morale with good gigs and rest, lose it with bad gigs and no rest, and leave', () => {
+  it('gain morale with good gigs and rest, lose it with bad gigs and touring, and leave', () => {
     const band = startingBand();
-    expect(afterGig(band, 0.85, 'played')[0].morale).toBeCloseTo(0.8);
+    expect(afterGig(band, 0.85, 'played')[0].morale).toBeCloseTo(0.75);
     expect(afterGig(band, 0.3, 'played')[0].morale).toBeCloseTo(0.58);
     expect(afterGig(band, 0.9, 'booed')[0].morale).toBeCloseTo(0.55);
-    expect(afterWeek(band, ['gig:x', 'rest', 'rest'])[0].morale).toBeCloseTo(0.9);
-    expect(afterWeek(band, ['gig:x', 'gig:y', 'rehearsal'])[0].morale).toBeCloseTo(0.62);
+    expect(afterWeek(band, ['gig:x', 'rest', 'rest'])[0].morale).toBeCloseTo(0.85);
+    // Touring twice a week wears them, however good the gigs.
+    expect(afterWeek(band, ['gig:x', 'gig:y', 'rehearsal'])[0].morale).toBeCloseTo(0.63);
     const unhappy = band.map((m, i) => (i === 1 ? { ...m, morale: 0.1 } : m));
     const { members, gone } = departures(unhappy);
     expect(gone.map((m) => m.name)).toEqual(['Karim']);

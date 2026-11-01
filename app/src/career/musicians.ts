@@ -19,6 +19,8 @@ export interface Musician {
   reliability: number;
   /** 0..1. */
   morale: number;
+  /** A wage raise won (share, see manager.ts). */
+  raise?: number;
 }
 
 /** A musician on the market: what signing costs and the fans the band needs. */
@@ -77,16 +79,17 @@ export function lineUp(members: readonly Musician[], key: string): { members: Mu
 
 /** Morale after a gig: up after a crowd won over, down after a cold one, a booing or walking off. */
 export function afterGig(members: readonly Musician[], satisfaction: number, outcome: 'played' | 'booed' | 'abandoned'): Musician[] {
-  const delta = outcome === 'booed' ? -0.15 : outcome === 'abandoned' ? -0.1 : satisfaction >= 0.7 ? 0.1 : satisfaction < 0.4 ? -0.12 : 0.02;
+  const delta = outcome === 'booed' ? -0.15 : outcome === 'abandoned' ? -0.1 : satisfaction >= 0.7 ? 0.05 : satisfaction < 0.4 ? -0.12 : 0.01;
   return members.map((m) => ({ ...m, morale: clamp(m.morale + delta, 0, 1) }));
 }
 
-/** Morale over a week: rest days lift it, a band rehearsal a little, gigs without rest wear it. */
-export function afterWeek(members: readonly Musician[], slots: readonly string[]): Musician[] {
+/** Morale over a week: rest days lift it, a band rehearsal a little, every gig wears it by `wear`
+ * (touring twice a week, week after week, needs rest weeks; less with a tour bus). */
+export function afterWeek(members: readonly Musician[], slots: readonly string[], wear = 0.05): Musician[] {
   const rest = slots.filter((s) => s === 'rest').length;
   const rehearsal = slots.filter((s) => s === 'rehearsal').length;
   const gigs = slots.filter((s) => s.startsWith('gig')).length;
-  const delta = 0.1 * rest + 0.04 * rehearsal - (gigs && !rest ? 0.06 * gigs : 0);
+  const delta = 0.1 * rest + 0.03 * rehearsal - wear * gigs;
   return members.map((m) => ({ ...m, morale: clamp(m.morale + delta, 0, 1) }));
 }
 
@@ -145,6 +148,7 @@ export function sanitizeMembers(raw: unknown): Musician[] {
       energy: n(m.energy, d.energy),
       reliability: n(m.reliability, d.reliability),
       morale: typeof m.morale === 'number' ? clamp(m.morale, 0, 1) : d.morale,
+      ...(typeof m.raise === 'number' && m.raise > 0 ? { raise: Math.min(3, m.raise) } : {}),
     };
   });
 }
