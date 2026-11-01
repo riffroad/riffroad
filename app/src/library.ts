@@ -125,6 +125,8 @@ export interface LibraryHooks {
   chords?(song: SongEntry): Promise<SongChord[]>;
   /** Replaces chords everywhere in it; resolves with how many beats changed, the library read again. */
   fixChords?(song: SongEntry, changes: string[]): Promise<number>;
+  /** Writes the song as a .feedpak where the player chooses: the file, or null if they did not. */
+  exportFeedpak?(song: SongEntry): Promise<string | null>;
 }
 
 /** Note names as the converter names chords (`harmony.NOTE_NAMES`). */
@@ -539,6 +541,7 @@ export class Library {
     card.querySelector('.buttons')!.before(this.levelSection(song));
     if (this.hooks.scoreAttack) card.querySelector('.buttons')!.after(this.attackSection(song));
     if (this.hooks.chords && sourceOf(song) === 'ai' && song.arrangement.toLowerCase() === 'chords') card.append(this.chordsSection(song));
+    if (this.hooks.exportFeedpak && sourceOf(song) === 'ai') card.append(this.shareSection(song));
     card.hidden = false;
     this.root.classList.add('with-card');
   }
@@ -629,6 +632,28 @@ export class Library {
         section.hidden = chords.length === 0;
       })
       .catch(() => (section.hidden = true));
+    return section;
+  }
+
+  /** An MP3's song, its chords corrected or not, as a .feedpak for feedBack and the other games
+   * that read the format. */
+  private shareSection(song: SongEntry): HTMLElement {
+    const section = document.createElement('div');
+    section.className = 'card-share';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'action small';
+    button.textContent = t('Exporter en .feedpak');
+    button.title = t('Toutes ses parties, la musique et la pochette, pour feedBack et les autres jeux qui lisent ce format.');
+    button.addEventListener('click', () => {
+      button.disabled = true;
+      this.hooks
+        .exportFeedpak?.(song)
+        .then((path) => path && this.status(t('Exporté : {path}', { path })))
+        .catch((e: unknown) => this.status(String(e), true))
+        .finally(() => (button.disabled = false));
+    });
+    section.append(button);
     return section;
   }
 

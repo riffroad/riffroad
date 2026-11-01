@@ -5085,6 +5085,10 @@ body.with-account-chip .hw-hud {
   gap: 8px;
 }
 
+.card-share {
+  margin: 10px 0 4px;
+}
+
 /* The song card's difficulty (library.ts): Auto or a level for the whole song. */
 .card-level {
   display: grid;

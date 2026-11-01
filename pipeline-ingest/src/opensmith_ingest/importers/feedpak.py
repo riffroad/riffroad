@@ -11,6 +11,9 @@ Difficulty: a pack that carries a ladder of levels per phrase keeps it as writte
 chord getting the range of levels at which it appears (the top level of a phrase extends to the
 arrangement's maximum, so a phrase complete at level 3 stays complete above). A pack with a
 single level gets the five levels generated for Guitar Pro tabs, its fingering kept as written.
+
+And back: `export_feedpak` writes an imported song's charts and audio as a pack (a chord chart
+corrected by its player, for feedBack and anyone else).
 """
 
 from __future__ import annotations
@@ -566,3 +569,120 @@ def ingest_feedpak(path: Path, out_dir: Path, *, arrangement: str | None = None,
             other.save(out_dir / f"song_chart.{part}.json")
     steps.done()
     return chart
+
+
+# Chart technique → note flag (FLAGS the other way; a mute written as `mt`).
+FLAG_OF = {name: flag for flag, name in FLAGS.items() if flag != "fhm"}
+# Techniques a chord passes to each of its notes.
+CHORD_FLAGS = ("palmMute", "mute", "accent", "linkNext")
+
+
+def _note_doc(s: int, f: int, sustain: float, techniques: dict, t: float | None = None) -> dict:
+    n: dict = {} if t is None else {"t": round(t, 4)}
+    n.update(s=s, f=f)
+    if sustain > 0:
+        n["sus"] = round(sustain, 4)
+    n.update({flag: True for name, flag in FLAG_OF.items() if techniques.get(name)})
+    if "slideTo" in techniques:
+        n["sl"] = int(techniques["slideTo"])
+    if techniques.get("bend"):
+        n["bn"] = float(techniques["bend"])
+    return n
+
+
+def _chord_doc(chart: Chart, c: ChartChord) -> dict:
+    techs = {k: v for k, v in c.techniques.items() if k in CHORD_FLAGS}
+    notes = [_note_doc(s, f, c.sustain, techs) for s, f in enumerate(chart.templates[c.template].frets) if f >= 0]
+    if c.strum:
+        for n in notes:
+            n["pkd"] = 0 if c.strum == "down" else 1
+    return {"t": round(c.time, 4), "id": c.template, "notes": notes}
+
+
+def arrangement_doc(chart: Chart) -> dict:
+    """A chart as a pack's arrangement: its shapes, each phrase's ladder of levels (§6.7), and the
+    whole part at its highest level for readers without ladders."""
+    top_notes, top_chords = chart.events_at(chart.max_difficulty)
+    phrases = []
+    for p in chart.phrases:
+        inside = lambda t, p=p: p.start <= t < p.end  # noqa: E731
+        levels = []
+        for d in range(p.max_difficulty + 1):
+            level: dict = {
+                "difficulty": d,
+                "notes": [_note_doc(n.string, n.fret, n.sustain, n.techniques, n.time) for n in chart.notes if inside(n.time) and n.levels[0] <= d <= n.levels[1]],
+                "chords": [_chord_doc(chart, c) for c in chart.chords if inside(c.time) and c.levels[0] <= d <= c.levels[1]],
+            }
+            if d == p.max_difficulty:
+                level["anchors"] = [{"time": a.time, "fret": a.fret, "width": a.width} for a in chart.anchors if inside(a.time)]
+                level["handshapes"] = [{"chord_id": h.template, "start_time": h.start, "end_time": h.end} for h in chart.hand_shapes if inside(h.start)]
+            levels.append(level)
+        phrases.append({"name": p.name, "start_time": p.start, "end_time": p.end, "max_difficulty": p.max_difficulty, "levels": levels})
+    return {
+        "name": chart.arrangement_name,
+        "templates": [{"name": t.name, "frets": t.frets, "fingers": t.fingers} for t in chart.templates],
+        "notes": [_note_doc(n.string, n.fret, n.sustain, n.techniques, n.time) for n in top_notes],
+        "chords": [_chord_doc(chart, c) for c in top_chords],
+        "phrases": phrases,
+    }
+
+
+def export_feedpak(folder: Path, dst: Path) -> Path:
+    """An imported song (its folder: `song_chart.json`, the other parts' `song_chart.<part>.json`,
+    their audio and cover) as a zipped pack at `dst`: every part an arrangement, the recording as
+    the `full` stem (else its backing and guitar, both played)."""
+    folder, dst = Path(folder), Path(dst)
+    charts = [(p, Chart.load(p)) for p in [folder / "song_chart.json", *sorted(folder.glob("song_chart.*.json"))] if p.is_file()]
+    if not charts:
+        raise FeedpakError(f"{folder.name}: no chart in this folder")
+    main = charts[0][1]
+    files: dict[str, Path | bytes] = {}
+    arrangements = []
+    for path, chart in charts:
+        if len(chart.tuning.strings) != len(STANDARD):
+            raise FeedpakError(f"{path.name}: only six-string guitar parts are exported")
+        part = path.name.removeprefix("song_chart").removesuffix(".json").strip(".")
+        ident = re.sub(r"[^a-z0-9]+", "-", (part or chart.arrangement_name).lower()).strip("-") or "part"
+        files[f"arrangements/{ident}.json"] = json.dumps(arrangement_doc(chart)).encode()
+        arrangements.append(
+            {
+                "id": ident,
+                "name": chart.arrangement_name,
+                "type": "guitar",
+                "file": f"arrangements/{ident}.json",
+                "tuning": [s - b for s, b in zip(chart.tuning.strings, STANDARD)],
+                "capo": chart.tuning.capo,
+                "centOffset": chart.tuning.cents,
+            }
+        )
+    stems = []
+    sources = [("full", main.audio_mix)] if main.audio_mix else [("backing", main.audio_backing), ("guitar", main.audio_guitar)]
+    for ident, rel in sources:
+        if rel and (folder / rel).is_file():
+            files[f"audio/{Path(rel).name}"] = folder / rel
+            stems.append({"id": ident, "file": f"audio/{Path(rel).name}", "default": True})
+    if not stems:
+        raise FeedpakError(f"{folder.name}: no audio to put in the pack")
+    files["song_timeline.json"] = json.dumps(
+        {
+            "beats": [{"time": b.time, "measure": b.bar or -1} for b in main.beats],
+            "sections": [{"time": s.start, "name": s.name} for s in main.sections],
+            "tempos": [{"time": 0.0, "bpm": main.bpm}],
+            "time_signatures": [{"time": 0.0, "ts": list(main.time_signature)}],
+        }
+    ).encode()
+    manifest: dict = {"feedpak_version": "1.0.0", "title": main.title, "artist": main.artist}
+    manifest.update({k: v for k, v in (("album", main.album), ("year", main.year)) if v})
+    manifest.update(duration=round(main.duration, 3), song_timeline="song_timeline.json", arrangements=arrangements, stems=stems)
+    if (folder / COVER).is_file():
+        files[COVER] = folder / COVER
+        manifest["cover"] = COVER
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.yaml", yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True))
+        for rel, content in files.items():
+            if isinstance(content, Path):
+                z.write(content, rel)
+            else:
+                z.writestr(rel, content)
+    return dst

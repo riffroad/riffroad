@@ -531,9 +531,28 @@ pub struct Importer {
 
 impl Importer {
     /// Replaces chords everywhere in an MP3's chord chart (`changes`: "G=Em"…) with the
-    /// converter's `chords` command, which makes the chart again; how many beats changed. The
-    /// converter a new version of the app brings is installed first, as before an import.
+    /// converter's `chords` command, which makes the chart again; how many beats changed.
     pub fn fix_chords(&self, chart: &Path, changes: &[String]) -> Result<u32, String> {
+        let mut args = vec!["chords".into(), chart.as_os_str().to_owned()];
+        for change in changes {
+            args.extend(["--set".into(), change.into()]);
+        }
+        #[derive(Deserialize)]
+        struct Done {
+            changed: u32,
+        }
+        serde_json::from_str::<Done>(&self.tool(&args)?).map(|d| d.changed).map_err(|e| e.to_string())
+    }
+
+    /// An imported song (its folder) written as a `.feedpak` at `dst`, every part with its audio.
+    pub fn export_feedpak(&self, folder: &Path, dst: &Path) -> Result<(), String> {
+        self.tool(&["export-feedpak".into(), folder.as_os_str().to_owned(), "-o".into(), dst.as_os_str().to_owned()]).map(|_| ())
+    }
+
+    /// One of the converter's commands (`args`: the command and its arguments) run to its end:
+    /// its last line. The converter a new version of the app brings is installed first, as
+    /// before an import.
+    fn tool(&self, args: &[std::ffi::OsString]) -> Result<String, String> {
         let pipeline = self.inner.pipeline.as_ref().ok_or("uv is not installed: run `brew install uv ffmpeg`")?;
         if let Some(install) = &pipeline.install {
             let _installing = self.inner.installing.lock().unwrap();
@@ -547,21 +566,14 @@ impl Importer {
             }
         }
         let mut cmd = Command::new(&pipeline.program);
-        cmd.args(&pipeline.args).arg("chords").arg(chart);
-        for change in changes {
-            cmd.arg("--set").arg(change);
-        }
+        cmd.args(&pipeline.args).args(args);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
         let done = cmd.env("PATH", &pipeline.path).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
         if !done.status.success() {
             return Err(last_line(&done.stderr));
         }
-        #[derive(Deserialize)]
-        struct Done {
-            changed: u32,
-        }
-        serde_json::from_str::<Done>(&last_line(&done.stdout)).map(|d| d.changed).map_err(|e| e.to_string())
+        Ok(last_line(&done.stdout))
     }
 
     /// Starts the worker, on the queue left by the last run if there is one.

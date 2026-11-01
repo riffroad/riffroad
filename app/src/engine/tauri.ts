@@ -109,6 +109,11 @@ export class TauriEngine implements Engine {
     return invoke<number>('fix_chords', { id, changes });
   }
 
+  /** The song of chart `id` (every part, its audio and cover) as a .feedpak at `path`. */
+  exportFeedpak(id: string, path: string): Promise<void> {
+    return invoke<void>('export_feedpak', { id, path });
+  }
+
   coverUrl(song: SongEntry): Promise<string | null> {
     const path = song.cover;
     if (!path) return Promise.resolve(null);

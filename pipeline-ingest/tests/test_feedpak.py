@@ -331,3 +331,37 @@ def test_a_stale_duration_gives_way_to_the_audio_and_the_notes(tmp_path, stated)
         assert [b.bar for b in chart.beats if b.bar][:4] == [1, 2, 3, 4], "bars numbered on"
         last = max(n.time for n in chart.notes)
         assert last == 3.5 and any(p.start <= last < p.end for p in chart.phrases), "no note left out of a phrase"
+
+
+def test_a_song_goes_out_as_a_pack_and_comes_back_the_same(tmp_path):
+    from opensmith_ingest.builder import MAX_DIFFICULTY, BeatGrid
+    from opensmith_ingest.chord_chart import build_chord_chart
+    from opensmith_ingest.importers.feedpak import export_feedpak
+    from opensmith_ingest.transcription import RawNote
+
+    def held(pitches, first, beats):
+        return [RawNote(first * 0.5, (first + beats) * 0.5, p, 0.8) for p in pitches]
+
+    # An MP3's chord chart (C, then a doubtful beat strummed muted, then G) and its recording.
+    notes = held([48, 52, 55, 60], 0, 4) + held([48, 52, 57], 4, 1) + held([48, 52, 55, 60], 5, 3) + held([43, 47, 50, 55, 59, 67], 8, 8)
+    song = tmp_path / "Band - Song"
+    song.mkdir()
+    chart = build_chord_chart(notes, BeatGrid.regular(120.0, 8.0), title="Song", artist="Band", duration=8.0)
+    chart.audio_backing = "backing.wav"
+    chart.save(song / "song_chart.json")
+    t = np.arange(8 * SR) / SR
+    sf.write(str(song / "backing.wav"), np.stack([0.2 * np.sin(2 * np.pi * 220 * t)] * 2, axis=1).astype(np.float32), SR)
+    pack = export_feedpak(song, tmp_path / "Song.feedpak")
+    assert zipfile.is_zipfile(pack)
+    back = ingest_feedpak(pack, tmp_path / "back")
+    assert (back.title, back.artist, back.source_kind) == ("Song", "Band", "feedpak")
+
+    def seen(c, level):
+        n, ch = c.events_at(level)
+        return sorted((x.time, x.string, x.fret, bool(x.techniques.get("mute"))) for x in n), sorted(
+            (x.time, tuple(c.templates[x.template].frets), bool(x.techniques.get("mute"))) for x in ch
+        )
+
+    for level in range(MAX_DIFFICULTY + 1):
+        assert seen(back, level) == seen(chart, level), level
+    assert any(m for *_, m in seen(back, MAX_DIFFICULTY)[1])

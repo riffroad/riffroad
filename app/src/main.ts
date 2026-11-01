@@ -14,6 +14,7 @@ import { coverElement } from './cover';
 import { DemoEngine } from './engine/demo';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { save } from '@tauri-apps/plugin-dialog';
 import { isTauri, TauriEngine, type AudioStatus } from './engine/tauri';
 import { findSong, type Engine, type SongEntry } from './engine/types';
 import { DEFAULT_GUITAR, engineSettings, GuitarSettings, type GuitarValues } from './guitar-settings';
@@ -1231,6 +1232,13 @@ const library = new Library($('library'), {
     await loadLibrary();
     if (mode === 'library') library.refresh(songs, progress);
     return changed;
+  },
+  exportFeedpak: async (song) => {
+    if (!(engine instanceof TauriEngine)) return null;
+    const path = await save({ defaultPath: `${song.artist} - ${song.title}.feedpak`, filters: [{ name: 'feedpak', extensions: ['feedpak'] }] });
+    if (!path) return null;
+    await engine.exportFeedpak(song.id, path);
+    return path;
   },
 });
 

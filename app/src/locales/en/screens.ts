@@ -103,6 +103,10 @@ export const SCREENS: Record<string, string> = {
   'IA': 'AI',
   'Notes transcrites automatiquement depuis l’enregistrement : il peut y avoir des erreurs.': 'Notes transcribed automatically from the recording: there may be mistakes.',
   'Accords du morceau': 'The song’s chords',
+  'Exporter en .feedpak': 'Export as .feedpak',
+  'Toutes ses parties, la musique et la pochette, pour feedBack et les autres jeux qui lisent ce format.':
+    'All its parts, the music and the cover, for feedBack and the other games that read the format.',
+  'Exporté : {path}': 'Exported: {path}',
   'Un accord faux ? Choisis-le, puis celui qu’on entend : il change partout.': 'A wrong chord? Pick it, then the one you hear: it changes everywhere.',
   '{n} temps, dont {m} étouffés : accord incertain': '{n} beats, {m} of them muted: an uncertain chord',
   '{n} temps': '{n} beats',

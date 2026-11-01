@@ -101,6 +101,10 @@ def _parser() -> argparse.ArgumentParser:
     again.add_argument("--no-consensus", action="store_true", help="keep each repeat of a phrase as transcribed")
     again.add_argument("--retune", action="store_true", help="detect the tuning again instead of keeping it")
 
+    export = sub.add_parser("export-feedpak", help="an imported song (its folder) → a .feedpak: every part, its audio and cover")
+    export.add_argument("folder", type=Path)
+    export.add_argument("-o", "--out", type=Path, required=True, help="the .feedpak to write")
+
     chords = sub.add_parser("chords", help="make a chord chart again from its own chords, some replaced everywhere (today's levels)")
     chords.add_argument("chart", type=Path, help="an MP3's chord chart (song_chart.chords.json)")
     chords.add_argument("--set", dest="changes", action="append", default=[], metavar="OLD=NEW", help="replace a chord everywhere: G=Em, F#m=F#5")
@@ -262,6 +266,10 @@ def _run(args: argparse.Namespace, emit: Emit | None) -> None:
             chart = rechart(folder, consensus=not args.no_consensus, report=report, retune=args.retune)
             details = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in report.items())
             print(f"{chart.artist} — {chart.title}: {len(chart.notes)} notes, {len(chart.chords)} chords, {len(chart.anchors)} hand positions ({details})")
+    elif args.cmd == "export-feedpak":
+        from .importers.feedpak import export_feedpak
+
+        print(json.dumps({"written": str(export_feedpak(args.folder, args.out))}))
     elif args.cmd == "chords":
         from .chart import Chart
         from .chord_chart import chords_of, parse_chord, rechord

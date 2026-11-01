@@ -387,6 +387,15 @@ async fn fix_chords(app: State<'_, App>, importer: State<'_, Importer>, id: Stri
     tauri::async_runtime::spawn_blocking(move || importer.fix_chords(&path, &changes)).await.map_err(|e| e.to_string())?
 }
 
+/// The song of chart `id` (its folder: every part, its audio and cover) as a `.feedpak` at `path`.
+#[tauri::command]
+async fn export_feedpak(app: State<'_, App>, importer: State<'_, Importer>, id: String, path: String) -> Result<(), String> {
+    let chart = resolve(&app.library, &id)?;
+    let folder = chart.parent().ok_or("chemin de morceau invalide")?.to_path_buf();
+    let importer = importer.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || importer.export_feedpak(&folder, Path::new(&path))).await.map_err(|e| e.to_string())?
+}
+
 /// Read off the main thread: imports land while a song is played.
 #[tauri::command]
 async fn cloud_status(cloud: State<'_, cloud::Cloud>) -> Result<cloud::Status, String> {
@@ -1230,6 +1239,7 @@ pub fn run() {
             perf_log,
             song_chords,
             fix_chords,
+            export_feedpak,
             import_paths,
             imports,
             import_folder,
