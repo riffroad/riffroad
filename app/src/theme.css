@@ -353,13 +353,23 @@ button.action:disabled {
 .menu-screen > .menu {
   display: flex;
   flex-direction: column;
-  justify-content: center;
   gap: 14px;
   width: min(560px, 46vw) !important;
   padding: 40px 48px !important;
   background:
     var(--noise),
     linear-gradient(100deg, rgba(9, 9, 11, 0.92) 0%, rgba(9, 9, 11, 0.75) 80%, rgba(9, 9, 11, 0) 100%);
+}
+
+/* Centered when there is room. In a short window (down to the 600 px minimum) the auto margins
+ * collapse and the menu scrolls from its top: `justify-content: center` would cut the title off
+ * above the screen, out of the scroll's reach. */
+.menu-screen > .menu > :first-child {
+  margin-top: auto;
+}
+
+.menu-screen > .menu > :last-child {
+  margin-bottom: auto;
 }
 
 .menu-brand h1 {
