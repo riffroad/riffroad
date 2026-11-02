@@ -5,6 +5,7 @@ import type { GameEvent } from '../game/types';
 import type { AmpSettings } from '../amp';
 import type { CareerStore } from '../career/career';
 import type { Progress, ProgressStore } from '../progress';
+import type { Backing } from '../backing';
 import type { Engine, Frame, RiffLoop, SongChord, SongEntry } from './types';
 import type { SoundName } from '../sounds';
 
@@ -155,8 +156,8 @@ export class TauriEngine implements Engine {
     return chart;
   }
 
-  async loadLesson(lesson: Chart): Promise<Chart> {
-    const raw = await invoke<unknown>('load_lesson', { json: JSON.stringify(lesson) });
+  async loadLesson(lesson: Chart, backing?: Backing): Promise<Chart> {
+    const raw = await invoke<unknown>('load_lesson', { json: JSON.stringify(lesson), band: backing ?? null });
     this.transposed = 0;
     const chart = parseChart(raw);
     this.clock = new ClockSync();

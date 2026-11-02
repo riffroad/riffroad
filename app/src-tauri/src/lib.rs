@@ -757,13 +757,18 @@ async fn load_song(
     Ok(json)
 }
 
-/// A lesson (a chart the app makes): every note from the start, over a metronome on its beats.
+/// A lesson (a chart the app makes): every note from the start, over a metronome on its beats,
+/// or over the `band` the app laid on them (the learning path's exercises).
 #[tauri::command]
-fn load_lesson(app: State<'_, App>, json: String) -> Result<serde_json::Value, String> {
+fn load_lesson(app: State<'_, App>, json: String, band: Option<opensmith_session::band::Band>) -> Result<serde_json::Value, String> {
     let chart = Chart::from_json(&json).map_err(|e| e.to_string())?;
     let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     let beats: Vec<(f64, bool)> = chart.beats.iter().map(|b| (b.time, b.bar.is_some())).collect();
-    let track = metronome(&beats, chart.meta.duration + 0.5, app.sample_rate);
+    let seconds = chart.meta.duration + 0.5;
+    let track = match &band {
+        Some(b) => opensmith_session::band::band(b, seconds, app.sample_rate),
+        None => metronome(&beats, seconds, app.sample_rate),
+    };
     app.session.send(Command::StartLevel(chart.arrangement.max_difficulty));
     app.session.send(Command::Dynamic(false));
     eprintln!("leçon chargée : {} ({} notes, {} accords)", chart.meta.title, chart.notes.len(), chart.chords.len());

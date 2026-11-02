@@ -5,6 +5,7 @@
 //! input callback when each guitar sample was captured, both in host time. An attack is placed in
 //! the song where the player *heard* it, whatever the latencies of the two devices.
 
+pub mod band;
 mod calibration;
 pub mod composer;
 mod events;

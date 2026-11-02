@@ -1,3 +1,4 @@
+import type { Backing } from '../backing';
 import type { CareerStore } from '../career/career';
 import type { Chart } from '../chart';
 import type { GameEvent } from '../game/types';
@@ -88,7 +89,8 @@ export interface Engine {
   /** `levels`: the level each phrase (by name) starts at, from earlier sessions. */
   load(id: string, levels?: Record<string, number>): Promise<Chart>;
   /** A chart made in the app (a lesson), all its notes at once, over a metronome on its beats. */
-  loadLesson(chart: Chart): Promise<Chart>;
+  /** A lesson: over its metronome, or over the backing band given (the learning path's exercises). */
+  loadLesson(chart: Chart, backing?: Backing): Promise<Chart>;
   play(): void;
   pause(): void;
   /** Moves to `time` and starts judging from there. */

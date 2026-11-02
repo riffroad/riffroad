@@ -47,7 +47,7 @@ export const CHORDS: Record<string, { frets: number[]; fingers: number[] }> = {
 
 export const STANDARD = [40, 45, 50, 55, 59, 64];
 /** Beats of metronome before the first note, and after the last one rings. */
-const LEAD = 4;
+export const LEAD = 4;
 const TAIL = 4;
 
 /** `notes` one after the other, every `every` beats from `from`. */
@@ -265,7 +265,7 @@ function teaching(): Lesson[] {
   ];
 }
 
-const isChord = (s: Step): s is Extract<Step, { chord: string }> => 'chord' in s;
+export const isChord = (s: Step): s is Extract<Step, { chord: string }> => 'chord' in s;
 
 /** Where the index finger goes for `step`, the hand at `hand` before it (frets `hand` to
  * `hand + 3`, one finger each): a note inside stays there; a chord puts the index where its own
