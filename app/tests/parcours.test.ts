@@ -4,7 +4,7 @@ import type { Chart } from '../src/chart';
 import type { ViewItem } from '../src/game/view';
 import { LEAD, type Lesson } from '../src/lessons';
 import { symbolsIn } from '../src/lexicon';
-import { chapters, findNotion, focusScore, learned, nextNotion, open, stars } from '../src/parcours';
+import { chapters, dueNotions, findNotion, focusScore, learned, nextNotion, open, reviewed, stars, testId, testOpen } from '../src/parcours';
 
 describe('the learning path', () => {
   const all = chapters();
@@ -43,6 +43,37 @@ describe('the learning path', () => {
     const basics = Object.fromEntries(all[0].notions.flatMap((n) => n.exercises.slice(0, 2).map((e) => [e.id, 1])));
     expect(open(all, 1, 0, basics)).toBe(true);
     expect(nextNotion(all, basics)).toEqual([1, 0]);
+  });
+
+  it('lets a player who knows a chapter pass its test and skip it', () => {
+    const basics = all[0];
+    // The test plays the chapter's notions one after the other, at tempo with the band.
+    expect(basics.test.lesson.steps.length).toBe(basics.notions.reduce((sum, n) => sum + n.exercises[0].lesson.steps.length, 0));
+    expect([basics.test.wait, basics.test.pace, basics.test.backing !== null]).toEqual([false, 1, true]);
+    expect([testOpen(all, 0, {}), testOpen(all, 1, {})]).toEqual([true, false]);
+    const tested = { [testId('basics')]: 0.85 };
+    expect(basics.notions.every((n) => learned(n, tested))).toBe(true);
+    expect([open(all, 1, 0, tested), testOpen(all, 1, tested)]).toEqual([true, true]);
+    expect(learned(all[1].notions[0], tested)).toBe(false);
+    expect(learned(basics.notions[0], { [testId('basics')]: 0.7 })).toBe(false);
+  });
+
+  it('brings a learned notion back to review, further away each time', () => {
+    const first = all[0].notions[0];
+    const records = { [first.exercises[0].id]: 1, [first.exercises[1].id]: 1 };
+    // Learned on 1 March: due a week later, not before.
+    let reviews = reviewed({}, first.id, '2026-03-01', true);
+    expect(dueNotions(all, records, reviews, '2026-03-07')).toEqual([]);
+    expect(dueNotions(all, records, reviews, '2026-03-08').map((n) => n.id)).toEqual([first.id]);
+    // Reviewed then: next one two weeks later.
+    reviews = reviewed(reviews, first.id, '2026-03-08', true);
+    expect(reviews[first.id]).toEqual({ last: '2026-03-08', step: 1 });
+    expect(dueNotions(all, records, reviews, '2026-03-21')).toEqual([]);
+    expect(dueNotions(all, records, reviews, '2026-03-22').length).toBe(1);
+    // Played again before it is due: the date moves, not the step.
+    expect(reviewed(reviews, first.id, '2026-03-10', true)[first.id]).toEqual({ last: '2026-03-10', step: 1 });
+    // A notion not learned yet has no reviews.
+    expect(reviewed({}, first.id, '2026-03-01', false)).toEqual({});
   });
 
   it('judges a notion on its own notes', () => {

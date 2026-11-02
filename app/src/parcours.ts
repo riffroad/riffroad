@@ -18,8 +18,8 @@ export type Focus = 'all' | 'chords' | 'palmMute' | 'mute' | 'hammerOn' | 'pullO
 
 export interface Exercise {
   id: string;
-  /** Step by step, in time, with the band. */
-  kind: 'step' | 'time' | 'band';
+  /** Step by step, in time, with the band; or a chapter's test. */
+  kind: 'step' | 'time' | 'band' | 'test';
   title: string;
   lesson: Lesson;
   /** The song stops on each note until it is played. */
@@ -35,6 +35,8 @@ export interface Exercise {
 
 export interface Notion {
   id: string;
+  /** Its chapter's id. */
+  chapter: string;
   title: string;
   /** What it teaches, why it matters. */
   learn: string;
@@ -51,7 +53,14 @@ export interface Chapter {
   title: string;
   blurb: string;
   notions: Notion[];
+  /** Its notions one after the other, at tempo with the band: passed, the chapter is learned
+   * (a player who already knows it skips it). */
+  test: Exercise;
 }
+
+/** Share of a chapter test's notes to play to skip the chapter. */
+export const TEST_GOAL = 0.8;
+export const testId = (chapter: string): string => `p.test.${chapter}`;
 
 /** Notes of an exercise played at its tempo: the second exercise goes this much slower. */
 const SLOWER = 0.75;
@@ -73,13 +82,14 @@ interface Base {
   was?: string;
 }
 
-/** The three exercises of a notion. */
+/** The three exercises of a notion (its chapter set by `chapter`). */
 function notion(b: Base): Notion {
   const lesson = (id: string, title: string, steps: Step[], goal: number): Lesson => ({ id, title, learn: b.learn, how: b.how, goal, bpm: b.bpm, steps });
   const twice = [...b.steps, ...b.steps.map((s) => ({ ...s, beat: s.beat + span(b.steps) }))];
   const roots = b.roots ?? [];
   return {
     id: b.id,
+    chapter: '',
     title: b.title,
     learn: b.learn,
     why: b.why,
@@ -98,6 +108,25 @@ function notion(b: Base): Notion {
 function span(steps: readonly Step[]): number {
   const last = steps.reduce((m, s) => Math.max(m, s.beat + (s.hold ?? 1)), 0);
   return Math.max(4, Math.ceil(last / 4) * 4);
+}
+
+/** A chapter: its notions stamped with its id, and its test (their first exercises' steps one
+ * after the other, at the chapter's usual tempo, over the band of its last notion). */
+function chapter(id: string, title: string, blurb: string, notions: Notion[]): Chapter {
+  const stamped = notions.map((n) => ({ ...n, chapter: id }));
+  const steps: Step[] = [];
+  let at = 0;
+  for (const n of stamped) {
+    const own = n.exercises[0].lesson.steps;
+    steps.push(...own.map((s) => ({ ...s, beat: s.beat + at })));
+    at += span(own);
+  }
+  const tempos = stamped.map((n) => n.exercises[0].lesson.bpm).sort((a, b) => a - b);
+  const bpm = tempos[Math.floor(tempos.length / 2)];
+  const last = stamped[stamped.length - 1].exercises[2];
+  const name = t('Test du chapitre');
+  const lesson: Lesson = { id: testId(id), title: name, learn: blurb, how: [], goal: TEST_GOAL, bpm, steps };
+  return { id, title, blurb, notions: stamped, test: { id: testId(id), kind: 'test', title: name, lesson, wait: false, pace: 1, backing: last.backing, roots: [], goal: TEST_GOAL } };
 }
 
 /** A lesson from before the path, by id: its tempo, steps and words. */
@@ -122,23 +151,14 @@ const range = (from: number, to: number, every: number): number[] => Array.from(
 /** The chapters, in order, in the interface language. */
 export function chapters(): Chapter[] {
   return [
-    {
-      id: 'basics',
-      title: t('Prise en main'),
-      blurb: t('Les cordes, les cases, le rythme : de quoi jouer tes premières notes en mesure.'),
-      notions: [
+    chapter('basics', t('Prise en main'), t('Les cordes, les cases, le rythme : de quoi jouer tes premières notes en mesure.'), [
         notion(from('open-strings', { why: t('Tout part de là : savoir quelle corde est laquelle, au premier coup d’œil.'), symbol: 'open', focus: 'all', backing: 'pulse' })),
         notion(from('in-time', { why: t('Une note juste mais en retard sonne faux : le rythme compte autant que la note.'), symbol: null, focus: 'all', backing: 'pulse' })),
         notion(from('first-frets', { why: t('Appuyer derrière la bonne case, c’est la moitié de la guitare.'), symbol: 'fret', focus: 'all', backing: 'pulse' })),
         notion(from('spider', { why: t('Un doigt par case : la main reste en place et va plus vite.'), symbol: null, focus: 'all', backing: 'pulse' })),
         notion(from('melody', { why: t('Tenir une note jusqu’au bout, c’est ce qui fait chanter une mélodie.'), symbol: 'sustain', focus: 'all', backing: 'pulse', roots: ['G', 'G', 'D', 'G'] })),
-      ],
-    },
-    {
-      id: 'power',
-      title: t('Power chords et palm mute'),
-      blurb: t('Le son du rock : des accords à deux doigts, étouffés ou lâchés, sur un vrai groupe.'),
-      notions: [
+    ]),
+    chapter('power', t('Power chords et palm mute'), t('Le son du rock : des accords à deux doigts, étouffés ou lâchés, sur un vrai groupe.'), [
         notion(from('power-chord', { why: t('L’accord du rock : deux doigts, et tous les riffs s’ouvrent à toi.'), symbol: 'chord', focus: 'chords', backing: 'rock' })),
         notion(from('first-riff', { id: 'power-moves', why: t('Un riff, c’est une forme qui voyage sur le manche : la main bouge, la forme reste.'), symbol: 'chord', focus: 'chords', backing: 'rock' })),
         notion({
@@ -199,13 +219,8 @@ export function chapters(): Chapter[] {
             { beat: bar + 7, chord: 'E5' },
           ]),
         }),
-      ],
-    },
-    {
-      id: 'open',
-      title: t('Accords ouverts'),
-      blurb: t('Les accords qui sonnent sur les six cordes, et passer de l’un à l’autre sans casser le rythme.'),
-      notions: [
+    ]),
+    chapter('open', t('Accords ouverts'), t('Les accords qui sonnent sur les six cordes, et passer de l’un à l’autre sans casser le rythme.'), [
         notion(from('e-minor', { why: t('Le premier accord sur six cordes, avec deux doigts seulement.'), symbol: 'chord', focus: 'chords', backing: 'pulse' })),
         notion(from('a-minor', { why: t('Avec Mi mineur, il ouvre des centaines de chansons.'), symbol: 'chord', focus: 'chords', backing: 'pulse' })),
         notion(from('chord-change', { why: t('Changer d’accord à temps, c’est ce qui fait tenir une chanson.'), symbol: null, focus: 'chords', backing: 'ballad' })),
@@ -257,13 +272,8 @@ export function chapters(): Chapter[] {
           backing: 'ballad',
           steps: strumsOf(['G', 'G', 'D', 'D', 'Em', 'Em', 'C', 'C', 'G', 'G', 'D', 'D', 'Em', 'Em', 'C', 'C'], 2),
         }),
-      ],
-    },
-    {
-      id: 'rhythm',
-      title: t('Rythmique'),
-      blurb: t('La main droite qui fait danser un morceau : coups sur les temps, entre les temps, étouffés, en motif.'),
-      notions: [
+    ]),
+    chapter('rhythm', t('Rythmique'), t('La main droite qui fait danser un morceau : coups sur les temps, entre les temps, étouffés, en motif.'), [
         notion({
           id: 'quarter-strums',
           title: t('Un coup par temps'),
@@ -347,13 +357,8 @@ export function chapters(): Chapter[] {
           backing: 'ballad',
           steps: ['G', 'C', 'D', 'G'].flatMap((chord, bar) => [0, 1, 1.5, 2.5, 3, 3.5].map((b) => ({ beat: bar * 4 + b, chord, hold: 0.5 }))),
         }),
-      ],
-    },
-    {
-      id: 'left-hand',
-      title: t('Main gauche'),
-      blurb: t('Les notes qui chantent sans regratter : liés, glissés, vibrato et bends, sur un groupe de blues.'),
-      notions: [
+    ]),
+    chapter('left-hand', t('Main gauche'), t('Les notes qui chantent sans regratter : liés, glissés, vibrato et bends, sur un groupe de blues.'), [
         notion({
           id: 'hammer-on',
           title: t('Le hammer-on (H)'),
@@ -479,8 +484,7 @@ export function chapters(): Chapter[] {
             { beat: bar + 4, string: 3, fret: 5, hold: 3, techniques: { vibrato: true } },
           ]),
         }),
-      ],
-    },
+    ]),
   ];
 }
 
@@ -489,8 +493,70 @@ export const passedExercise = (e: Exercise, records: LessonRecords): boolean => 
 /** Exercises of `n` passed: its stars, 0 to 3. */
 export const stars = (n: Notion, records: LessonRecords): number => n.exercises.filter((e) => passedExercise(e, records)).length;
 
-/** Learned: in time with the band at least (two stars, the first two exercises). */
-export const learned = (n: Notion, records: LessonRecords): boolean => passedExercise(n.exercises[0], records) && passedExercise(n.exercises[1], records);
+/** Learned: in time with the band at least (two stars, the first two exercises), or its
+ * chapter's test passed. */
+export const learned = (n: Notion, records: LessonRecords): boolean =>
+  (passedExercise(n.exercises[0], records) && passedExercise(n.exercises[1], records)) || (records[testId(n.chapter)] ?? 0) >= TEST_GOAL;
+
+/** Whether chapter `c`'s test can be taken: every chapter before is learned. */
+export const testOpen = (all: readonly Chapter[], c: number, records: LessonRecords): boolean => all.slice(0, c).every((ch) => ch.notions.every((n) => learned(n, records)));
+
+/** Days before a learned notion comes back to be reviewed, by the reviews it has passed. */
+export const REVIEW_DAYS = [7, 14, 30, 60];
+
+/** For each learned notion: the day (YYYY-MM-DD) of its last exercise passed, the reviews passed. */
+export type Reviews = Record<string, { last: string; step: number }>;
+
+const dayOf = (iso: string): number => Math.floor(Date.parse(`${iso}T00:00:00Z`) / 86_400_000);
+export const today = (now = new Date()): string => now.toISOString().slice(0, 10);
+
+/** Whether notion `id` is to be reviewed on day `on`. */
+export function due(reviews: Reviews, id: string, on: string): boolean {
+  const r = reviews[id];
+  return !!r && dayOf(on) - dayOf(r.last) >= REVIEW_DAYS[Math.min(r.step, REVIEW_DAYS.length - 1)];
+}
+
+/** The learned notions to review on day `on`, the longest overdue first. */
+export function dueNotions(all: readonly Chapter[], records: LessonRecords, reviews: Reviews, on: string): Notion[] {
+  return all
+    .flatMap((c) => c.notions)
+    .filter((n) => learned(n, records) && due(reviews, n.id, on))
+    .sort((a, b) => dayOf(reviews[a.id].last) - dayOf(reviews[b.id].last));
+}
+
+/** After an exercise of notion `id` passed on day `on` (`isLearned`: the notion now learned): its
+ * reviews start once it is learned; a review passed when due sets the next one further away. */
+export function reviewed(reviews: Reviews, id: string, on: string, isLearned: boolean): Reviews {
+  const r = reviews[id];
+  if (!r) return isLearned ? { ...reviews, [id]: { last: on, step: 0 } } : reviews;
+  const step = due(reviews, id, on) ? Math.min(r.step + 1, REVIEW_DAYS.length - 1) : r.step;
+  return { ...reviews, [id]: { last: on, step } };
+}
+
+/** Where the reviews are kept (synced online with the progress). */
+export const REVIEWS = 'opensmith.parcoursReviews';
+
+export function loadReviews(): Reviews {
+  try {
+    const raw = JSON.parse(localStorage.getItem(REVIEWS) ?? '{}') as unknown;
+    if (!raw || typeof raw !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(raw as Record<string, unknown>).filter(
+        ([, v]) => !!v && typeof v === 'object' && typeof (v as { last?: unknown }).last === 'string' && typeof (v as { step?: unknown }).step === 'number',
+      ),
+    ) as Reviews;
+  } catch {
+    return {};
+  }
+}
+
+export function saveReviews(reviews: Reviews): void {
+  try {
+    localStorage.setItem(REVIEWS, JSON.stringify(reviews));
+  } catch {
+    // no storage: the reviews start again next time
+  }
+}
 
 /** Whether notion `k` of chapter `c` can be played: the one before learned, and every notion of
  * the chapters before. */

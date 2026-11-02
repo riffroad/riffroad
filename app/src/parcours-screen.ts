@@ -1,7 +1,7 @@
 import { t } from './i18n';
 import type { LessonRecords } from './lessons';
 import { symbol } from './lexicon';
-import { type Chapter, type Exercise, learned, nextNotion, open, passedExercise, stars } from './parcours';
+import { type Chapter, type Exercise, learned, nextNotion, type Notion, open, passedExercise, stars, testOpen } from './parcours';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -14,7 +14,7 @@ const pct = (x: number): string => t('{n} %', { n: Math.round(x * 100) });
 const starText = (n: number): string => '★'.repeat(n) + '☆'.repeat(3 - n);
 
 export interface ParcoursHooks {
-  /** Plays exercise `step` of notion `notion` in chapter `chapter`. */
+  /** Plays exercise `step` of notion `notion` in chapter `chapter` (notion -1: the chapter's test). */
   play(chapter: number, notion: number, step: number): void;
   /** Plays recording session `index` (of `lessons()`). */
   record(index: number): void;
@@ -28,6 +28,8 @@ export class ParcoursScreen {
   private records: LessonRecords = {};
   private recordings: { index: number; title: string; learn: string }[] = [];
   private picked: [number, number] = [0, 0];
+  /** The learned notions to review today, the longest overdue first. */
+  private due: Notion[] = [];
 
   constructor(
     private readonly root: HTMLElement,
@@ -59,11 +61,13 @@ export class ParcoursScreen {
     });
   }
 
-  /** The path with its records, `picked` opened (by default the next notion to learn). */
-  show(all: Chapter[], records: LessonRecords, recordings: { index: number; title: string; learn: string }[], picked?: [number, number]): void {
+  /** The path with its records and today's reviews, `picked` opened (by default the next notion
+   * to learn). */
+  show(all: Chapter[], records: LessonRecords, recordings: { index: number; title: string; learn: string }[], due: Notion[], picked?: [number, number]): void {
     this.all = all;
     this.records = records;
     this.recordings = recordings;
+    this.due = due;
     this.picked = picked ?? nextNotion(all, records);
     this.render();
   }
@@ -94,8 +98,18 @@ export class ParcoursScreen {
       head,
       el('p', 'help', t('Une notion à la fois : trois exercices, du pas à pas au morceau avec le groupe. Deux étoiles pour l’apprendre et ouvrir la suivante ; elles se gagnent sur les notes de la notion.')),
     );
+    if (this.due.length) panel.append(this.reviews());
     this.all.forEach((chapter, c) => {
       panel.append(el('h3', 'parcours-chapter', t('Chapitre {n} · {title}', { n: c + 1, title: chapter.title })), el('p', 'help', chapter.blurb));
+      if (!chapter.notions.every((n) => learned(n, this.records)) && testOpen(this.all, c, this.records)) {
+        const test = el('div', 'chapter-test');
+        const go = el('button', 'action small', t('Je sais déjà : passer le test'));
+        go.type = 'button';
+        go.dataset.exercise = `${c}:-1:0`;
+        const best = this.records[chapter.test.id];
+        test.append(go, el('small', '', best === undefined ? t('Réussi à {goal}, tout le chapitre est appris.', { goal: pct(chapter.test.goal) }) : t('Réussi à {goal}, tout le chapitre est appris · ton meilleur {best}', { goal: pct(chapter.test.goal), best: pct(best) })));
+        panel.append(test);
+      }
       const list = el('ol', 'lesson-list');
       chapter.notions.forEach((notion, n) => {
         const playable = open(this.all, c, n, this.records);
@@ -110,6 +124,7 @@ export class ParcoursScreen {
         text.append(el('b', '', notion.title), el('span', '', notion.learn));
         const meta = el('small', 'notion-stars', starText(stars(notion, this.records)));
         if (notion.symbol) meta.append(el('span', 'notion-symbol', symbol(notion.symbol).glyph));
+        if (this.due.includes(notion)) meta.append(el('span', 'notion-due', t('À revoir')));
         text.append(meta);
         top.append(el('span', 'lesson-number', playable ? (done ? '✓' : String(n + 1)) : '🔒'), text);
         item.append(top);
@@ -135,6 +150,37 @@ export class ParcoursScreen {
     }
     this.root.replaceChildren(panel);
     this.root.querySelector<HTMLElement>('.lesson.open')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Today's reviews: the notions due, and the first one to play. */
+  private reviews(): HTMLElement {
+    const box = el('div', 'parcours-reviews');
+    box.append(el('h3', '', t('À revoir aujourd’hui')), el('p', 'help', t('Les notions apprises reviennent de temps en temps, de plus en plus espacées : une révision réussie la repousse plus loin.')));
+    const list = el('div', 'chord-chips');
+    for (const n of this.due) {
+      const where = this.place(n);
+      const chip = el('button', 'chip', n.title);
+      chip.type = 'button';
+      chip.dataset.notion = `${where[0]}:${where[1]}`;
+      list.append(chip);
+    }
+    const first = this.due[0];
+    const [c, k] = this.place(first);
+    const step = passedExercise(first.exercises[2], this.records) ? 2 : 1;
+    const go = el('button', 'action primary small', t('Réviser « {title} »', { title: first.title }));
+    go.type = 'button';
+    go.dataset.exercise = `${c}:${k}:${step}`;
+    box.append(list, go);
+    return box;
+  }
+
+  /** Chapter and index of notion `n`. */
+  private place(n: Notion): [number, number] {
+    for (let c = 0; c < this.all.length; c++) {
+      const k = this.all[c].notions.indexOf(n);
+      if (k >= 0) return [c, k];
+    }
+    return [0, 0];
   }
 
   /** The notion opened: why, how, its symbol, its exercises. */

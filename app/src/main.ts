@@ -79,7 +79,7 @@ import { lessonChart, lessons, loadLessons, paceFactor, recordLesson, type Lesso
 import { LexiconScreen, symbolCard } from './lexicon-screen';
 import { markSeen, seenSymbols, symbol, symbolsIn } from './lexicon';
 import { ParcoursScreen } from './parcours-screen';
-import { chapters, focusScore, learned, nextNotion, open as notionOpen, stars as notionStars } from './parcours';
+import { chapters, dueNotions, focusScore, learned, loadReviews, nextNotion, open as notionOpen, reviewed, REVIEWS, saveReviews, stars as notionStars, today } from './parcours';
 import { backingFor } from './backing';
 import { interfaceSounds, SoundBoard } from './sfx';
 import { SOUND_NAMES, type SoundName } from './sounds';
@@ -247,8 +247,11 @@ let studioRun: string | null = null;
 let playSpeed = 1;
 /** The lesson being played (its index), null for a song. */
 let lessonRun: number | null = null;
-/** The exercise of the learning path being played: chapter, notion, step (0 to 2). */
+/** The exercise of the learning path being played: chapter, notion, step (0 to 2); notion -1:
+ * the chapter's test. */
 let exerciseRun: { chapter: number; notion: number; step: number } | null = null;
+/** When each learned notion of the path comes back to be reviewed. */
+let reviews = loadReviews();
 /** A lesson, a recording session or an exercise of the path: not a song of the library. */
 const inLesson = (): boolean => lessonRun !== null || exerciseRun !== null;
 /** A career training drill being played, on the card's rating it works. */
@@ -322,6 +325,7 @@ const cloud =
           progress: {
             'opensmith.progress': { read: () => engine.progress.load(), write: (v) => engine.progress.save(v as Progress) },
             'opensmith.lessons': storagePart(localStorage, 'opensmith.lessons'),
+            [REVIEWS]: storagePart(localStorage, REVIEWS),
             'opensmith.practice': storagePart(localStorage, PRACTICE),
           },
         },
@@ -1313,11 +1317,17 @@ function updateMenu(): void {
   const notions = path.flatMap((c) => c.notions);
   const earned = notions.reduce((sum, n) => sum + notionStars(n, lessonRecords), 0);
   const [nc, nn] = nextNotion(path, lessonRecords);
-  $('menuLessons').textContent = earned
-    ? notions.every((n) => learned(n, lessonRecords))
-      ? t('Tout le Parcours est appris : place aux morceaux !')
-      : t('{n} étoiles · prochaine notion : {title}', { n: earned, title: path[nc].notions[nn].title })
-    : t('Pour apprendre à jouer, en partant de zéro');
+  const toReview = dueNotions(path, lessonRecords, reviews, today()).length;
+  $('menuLessons').textContent = [
+    earned
+      ? notions.every((n) => learned(n, lessonRecords))
+        ? t('Tout le Parcours est appris : place aux morceaux !')
+        : t('{n} étoiles · prochaine notion : {title}', { n: earned, title: path[nc].notions[nn].title })
+      : t('Pour apprendre à jouer, en partant de zéro'),
+    toReview ? tn(toReview, '{n} notion à revoir', '{n} notions à revoir') : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const on = onAt(liveEvents, new Date())[0];
   $('menuEvent').hidden = !on;
   if (on) {
@@ -1607,7 +1617,8 @@ const recordings = () => lessons().flatMap((l, index) => (l.record ? [{ index, t
 
 /** The learning path, `picked` notion open (by default the next one to learn). */
 function openLessons(picked?: [number, number]): void {
-  parcoursScreen.show(chapters(), lessonRecords, recordings(), picked);
+  const path = chapters();
+  parcoursScreen.show(path, lessonRecords, recordings(), dueNotions(path, lessonRecords, reviews, today()), picked);
   setMode('lessons');
 }
 
@@ -1638,8 +1649,10 @@ function explainSymbols(chart: Chart): Promise<void> {
 /** Exercise `step` of notion `notion` in chapter `chapter`, after the tuner: over its band (else
  * the metronome), in wait mode step by step; judged on the notion's own notes. */
 async function startExercise(chapter: number, notion: number, step: number): Promise<void> {
-  const n = chapters()[chapter]?.notions[notion];
-  const ex = n?.exercises[step];
+  const ch = chapters()[chapter];
+  // The chapter's test: its notions one after the other, judged on every note.
+  const n = notion < 0 && ch ? { title: ch.title, symbol: null, how: [t('Toutes les notions du chapitre, l’une après l’autre, au tempo et avec le groupe.')] } : ch?.notions[notion];
+  const ex = notion < 0 ? ch?.test : ch?.notions[notion]?.exercises[step];
   if (!n || !ex) return;
   exerciseRun = { chapter, notion, step };
   lessonRun = null;
@@ -1681,9 +1694,10 @@ async function startExercise(chapter: number, notion: number, step: number): Pro
 }
 
 /** The exercise after the one just played: the notion's next, else the next notion's first (if
- * it is open now). */
+ * it is open now); after a chapter's test, the next chapter's first notion. */
 function nextExercise(run: { chapter: number; notion: number; step: number }): { chapter: number; notion: number; step: number } | null {
   const all = chapters();
+  if (run.notion < 0) return run.chapter + 1 < all.length && notionOpen(all, run.chapter + 1, 0, lessonRecords) ? { chapter: run.chapter + 1, notion: 0, step: 0 } : null;
   if (run.step + 1 < all[run.chapter].notions[run.notion].exercises.length) return { ...run, step: run.step + 1 };
   const [c, k] = run.notion + 1 < all[run.chapter].notions.length ? [run.chapter, run.notion + 1] : [run.chapter + 1, 0];
   return c < all.length && notionOpen(all, c, k, lessonRecords) ? { chapter: c, notion: k, step: 0 } : null;
@@ -1692,6 +1706,7 @@ function nextExercise(run: { chapter: number; notion: number; step: number }): {
 /** End of an exercise: judged on the notion's notes, its best kept, the stars, the way on. */
 function exerciseVerdict(judged: boolean, practice: boolean): void {
   const run = exerciseRun!;
+  if (run.notion < 0) return testVerdict(run, judged, practice);
   const notion = chapters()[run.chapter].notions[run.notion];
   const ex = notion.exercises[run.step];
   const score = view && chart ? focusScore(view.items, chart, notion.focus) : { hits: 0, judged: 0 };
@@ -1700,6 +1715,10 @@ function exerciseVerdict(judged: boolean, practice: boolean): void {
   if (judged && !practice && !autopiloting()) lessonRecords = recordLesson(lessonRecords, ex.id, acc);
   const ok = judged && !practice && acc >= ex.goal;
   const nowLearned = !before && learned(notion, lessonRecords);
+  if (ok) {
+    reviews = reviewed(reviews, notion.id, today(), learned(notion, lessonRecords));
+    saveReviews(reviews);
+  }
   if (ok) {
     window.setTimeout(() => sfx.cue('fanfare'), 500);
     sfx.applause(nowLearned ? 0.8 : 0.4);
@@ -1866,6 +1885,37 @@ function lessonVerdict(acc: number, judged: boolean, practice: boolean): void {
   $('records').classList.toggle('new', ok);
   const go = screens.results.querySelector<HTMLElement>('[data-action="next-lesson"]')!;
   go.hidden = !ok || !next;
+  screens.results.querySelector<HTMLElement>('[data-action="restart"]')!.classList.toggle('primary', go.hidden);
+}
+
+/** End of a chapter's test: passed, the whole chapter is learned (its reviews start). */
+function testVerdict(run: { chapter: number; notion: number; step: number }, judged: boolean, practice: boolean): void {
+  const all = chapters();
+  const ch = all[run.chapter];
+  const score = view && chart ? focusScore(view.items, chart, 'all') : { hits: 0, judged: 0 };
+  const acc = score.judged ? score.hits / score.judged : 0;
+  if (judged && !practice && !autopiloting()) lessonRecords = recordLesson(lessonRecords, ch.test.id, acc);
+  const ok = judged && !practice && acc >= ch.test.goal;
+  if (ok) {
+    for (const n of ch.notions) reviews = reviewed(reviews, n.id, today(), true);
+    saveReviews(reviews);
+    window.setTimeout(() => sfx.cue('fanfare'), 500);
+    sfx.applause(0.8);
+  }
+  const pct = (x: number) => t('{n} %', { n: Math.round(x * 100) });
+  $('verdict').textContent = ok ? t('Chapitre validé !') : practice ? t('Entraînement au ralenti') : t('Encore un essai !');
+  const next = ok ? nextExercise(run) : null;
+  $('records').textContent = ok
+    ? next
+      ? t('« {chapter} » est appris · ensuite : {title}', { chapter: ch.title, title: all[next.chapter].notions[0].title })
+      : t('« {chapter} » est appris.', { chapter: ch.title })
+    : practice
+      ? t('Reviens à 100 % de la vitesse pour réussir le test.')
+      : t('Tu as joué {acc} des notes, il faut {goal} pour valider le chapitre.', { acc: pct(judged ? acc : 0), goal: pct(ch.test.goal) });
+  $('records').classList.toggle('new', ok);
+  const go = screens.results.querySelector<HTMLElement>('[data-action="next-lesson"]')!;
+  go.textContent = t('Chapitre suivant');
+  go.hidden = !next;
   screens.results.querySelector<HTMLElement>('[data-action="restart"]')!.classList.toggle('primary', go.hidden);
 }
 

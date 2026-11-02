@@ -211,4 +211,23 @@ export const PARCOURS: Record<string, string> = {
   'Tout se joue cases 5 et 7, l’index sur la 5, l’annulaire sur la 7.': 'Everything is on frets 5 and 7, index on 5, ring finger on 7.',
   'Les H et P se jouent sans regratter, le glissé sans lever le doigt.': 'The H and P are played without picking again, the slide without lifting the finger.',
   'La dernière note tient, avec du vibrato.': 'The last note rings on, with vibrato.',
+
+  // Reviews and chapter tests (parcours-screen.ts, main.ts)
+  'Toutes les notions du chapitre, l’une après l’autre, au tempo et avec le groupe.': 'Every lesson of the chapter, one after the other, at tempo with the band.',
+  'Chapitre validé !': 'Chapter passed!',
+  '« {chapter} » est appris · ensuite : {title}': '“{chapter}” is learned · next: {title}',
+  '« {chapter} » est appris.': '“{chapter}” is learned.',
+  'Reviens à 100 % de la vitesse pour réussir le test.': 'Go back to 100 % speed to pass the test.',
+  'Tu as joué {acc} des notes, il faut {goal} pour valider le chapitre.': 'You played {acc} of the notes; {goal} passes the chapter.',
+  'Chapitre suivant': 'Next chapter',
+  '{n} notion à revoir': '{n} lesson to review',
+  '{n} notions à revoir': '{n} lessons to review',
+  'Je sais déjà : passer le test': 'I know this: take the test',
+  'Réussi à {goal}, tout le chapitre est appris.': 'Passed at {goal}, the whole chapter is learned.',
+  'Réussi à {goal}, tout le chapitre est appris · ton meilleur {best}': 'Passed at {goal}, the whole chapter is learned · your best {best}',
+  'À revoir': 'To review',
+  'À revoir aujourd’hui': 'To review today',
+  'Les notions apprises reviennent de temps en temps, de plus en plus espacées : une révision réussie la repousse plus loin.': 'Learned lessons come back from time to time, further apart each time: a review passed pushes the next one further away.',
+  'Réviser « {title} »': 'Review “{title}”',
+  'Test du chapitre': 'Chapter test',
 };
