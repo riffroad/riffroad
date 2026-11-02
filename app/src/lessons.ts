@@ -33,8 +33,9 @@ export interface Lesson {
 }
 
 /** Chords the lessons use: fret per string from the low E (-1: not played), and the fingers
- * (1 index … 4 little finger, 0 open). */
-export const CHORDS: Record<string, { frets: number[]; fingers: number[] }> = {
+ * (1 index … 4 little finger, 0 open); `name` as shown, when the key tells shapes apart (a G
+ * played as a barre is still a G). */
+export const CHORDS: Record<string, { frets: number[]; fingers: number[]; name?: string }> = {
   E: { frets: [0, 2, 2, 1, 0, 0], fingers: [0, 2, 3, 1, 0, 0] },
   A: { frets: [-1, 0, 2, 2, 2, 0], fingers: [-1, 0, 1, 2, 3, 0] },
   C: { frets: [-1, 3, 2, 0, 1, 0], fingers: [-1, 3, 2, 0, 1, 0] },
@@ -45,6 +46,14 @@ export const CHORDS: Record<string, { frets: number[]; fingers: number[] }> = {
   A5: { frets: [-1, 0, 2, 2, -1, -1], fingers: [-1, 0, 1, 2, -1, -1] },
   Em: { frets: [0, 2, 2, 0, 0, 0], fingers: [0, 2, 3, 0, 0, 0] },
   Am: { frets: [-1, 0, 2, 2, 1, 0], fingers: [-1, 0, 2, 3, 1, 0] },
+  F: { frets: [1, 3, 3, 2, 1, 1], fingers: [1, 3, 4, 2, 1, 1] },
+  'F-small': { frets: [-1, -1, 3, 2, 1, 1], fingers: [-1, -1, 3, 2, 1, 1], name: 'F' },
+  Bm: { frets: [-1, 2, 4, 4, 3, 2], fingers: [-1, 1, 3, 4, 2, 1] },
+  'G-barre': { frets: [3, 5, 5, 4, 3, 3], fingers: [1, 3, 4, 2, 1, 1], name: 'G' },
+  'A-barre': { frets: [5, 7, 7, 6, 5, 5], fingers: [1, 3, 4, 2, 1, 1], name: 'A' },
+  'Am-barre': { frets: [5, 7, 7, 5, 5, 5], fingers: [1, 3, 4, 1, 1, 1], name: 'Am' },
+  'C-barre': { frets: [-1, 3, 5, 5, 5, 3], fingers: [-1, 1, 2, 3, 4, 1], name: 'C' },
+  'D-barre': { frets: [-1, 5, 7, 7, 7, 5], fingers: [-1, 1, 2, 3, 4, 1], name: 'D' },
 };
 
 export const STANDARD = [40, 45, 50, 55, 59, 64];

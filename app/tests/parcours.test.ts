@@ -1,17 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { backingFor, rootOf } from '../src/backing';
 import type { Chart } from '../src/chart';
 import type { ViewItem } from '../src/game/view';
-import { LEAD, type Lesson } from '../src/lessons';
+import { CHORDS, LEAD, lessonChart, type Lesson } from '../src/lessons';
 import { symbolsIn } from '../src/lexicon';
-import { chapters, dueNotions, findNotion, focusScore, learned, nextNotion, open, reviewed, stars, testId, testOpen } from '../src/parcours';
+import type { SongEntry } from '../src/engine/types';
+import { chapterLearned, chapters, doneToday, dueNotions, findNotion, focusScore, learned, markDone, needs, nextNotion, notionAfter, open, practiceSongs, reviewed, session, stars, testId, testOpen } from '../src/parcours';
 
 describe('the learning path', () => {
   const all = chapters();
+  afterEach(() => vi.unstubAllGlobals());
 
   it('teaches each notion in three exercises that ask a little more', () => {
-    expect(all.map((c) => c.id)).toEqual(['basics', 'power', 'open', 'rhythm', 'left-hand']);
-    expect(all.flatMap((c) => c.notions).length).toBe(27);
+    expect(all.map((c) => c.id)).toEqual(['basics', 'power', 'open', 'rhythm', 'left-hand', 'lead', 'barre', 'speed']);
+    expect(all.flatMap((c) => c.notions).length).toBe(45);
+    expect(new Set(all.flatMap((c) => c.notions.map((n) => n.id))).size).toBe(45);
     for (const n of all.flatMap((c) => c.notions)) {
       const [step, time, band] = n.exercises;
       expect([step.kind, time.kind, band.kind]).toEqual(['step', 'time', 'band']);
@@ -103,7 +106,91 @@ describe('the learning path', () => {
     expect(focusScore(items, legato, 'slide')).toEqual({ hits: 0, judged: 1 });
   });
 
-  it('judges each notion of chapters 3 to 5 on notes the exercises have', () => {
+  it('lets a challenge wait: nothing after it needs it, the chapter test leaves it out', () => {
+    const race = findNotion(all, 'chord-race')!;
+    expect(race.notion.bonus).toBe(true);
+    const open3 = all[2];
+    const before = Object.fromEntries(all.slice(0, 3).flatMap((c) => c.notions.filter((n) => !n.bonus).flatMap((n) => n.exercises.slice(0, 2).map((e) => [e.id, 1]))));
+    // The chapter is learned without its challenge, which is open and played only if wanted.
+    expect([chapterLearned(open3, before), learned(race.notion, before), open(all, race.chapter, race.index, before)]).toEqual([true, false, true]);
+    expect([open(all, 3, 0, before), nextNotion(all, before)]).toEqual([true, [3, 0]]);
+    // After the chapter's last notion, the way goes on to the next chapter, not to the challenge.
+    expect(notionAfter(all, 2, race.index - 1, before)).toEqual([3, 0]);
+    expect(open3.test.lesson.steps.length).toBe(open3.notions.filter((n) => !n.bonus).reduce((sum, n) => sum + n.exercises[0].lesson.steps.length, 0));
+  });
+
+  it('plays every exercise on the guitar: strings, frets and chords it has', () => {
+    for (const n of all.flatMap((c) => [...c.notions.flatMap((x) => x.exercises), c.test])) {
+      for (const s of n.lesson.steps) {
+        if ('chord' in s) expect(CHORDS[s.chord], `${n.id} ${s.chord}`).toBeDefined();
+        else expect(s.string >= 0 && s.string < 6 && s.fret >= 0 && s.fret <= 12, `${n.id} ${s.string}:${s.fret}`).toBe(true);
+      }
+      // No two notes on one string at once.
+      const at = n.lesson.steps.filter((s) => !('chord' in s)).map((s) => `${s.beat}:${'string' in s ? s.string : ''}`);
+      expect(new Set(at).size, n.id).toBe(at.length);
+    }
+  });
+
+  it('names a barre chord by the chord it is', () => {
+    const barre = findNotion(all, 'moving-barre')!.notion.exercises[0].lesson;
+    const chart = lessonChart({ ...barre, titled: true }, 0);
+    expect(chart.chordTemplates.map((c) => c.name)).toEqual(['F', 'G', 'A', 'Am']);
+    expect(chart.chordTemplates[1].frets).toEqual([3, 5, 5, 4, 3, 3]);
+    // The hand moves up the neck with the shape: fret 1, 3, then 5.
+    expect(chart.anchors.map((a) => a.fret)).toEqual([1, 3, 5]);
+  });
+
+  const song = (id: string, extra: Partial<SongEntry>): SongEntry => ({ id, title: id, artist: 'A', duration: 200, tuning: 'E Standard', arrangement: 'Lead', notes: 400, chords: 0, source: 'guitarpro', ...extra });
+
+  it('puts a notion in practice with the songs that play it, the easiest first', () => {
+    const notion = (id: string) => findNotion(all, id)!.notion;
+    expect(needs(notion('palm-mute'))).toEqual({ chords: [], power: false, techniques: ['palmMute'] });
+    expect(needs(notion('g-and-c'))).toEqual({ chords: ['G', 'C'], power: false, techniques: [] });
+    expect(needs(notion('moving-barre')).chords).toEqual(['F', 'G', 'A', 'Am']);
+    expect(needs(notion('garage-riff'))).toEqual({ chords: [], power: true, techniques: ['palmMute', 'mute'] });
+    const songs = [
+      song('busy', { notes: 900, techniques: { palmMute: 40 } }),
+      song('few', { techniques: { palmMute: 2 } }),
+      song('calm', { notes: 200, techniques: { palmMute: 12 } }),
+      // The bass and a draft don't count; the rhythm part beside them does.
+      song('parts', {
+        arrangementType: 'bass',
+        techniques: { palmMute: 50 },
+        others: [song('parts-ai', { source: 'audio', techniques: { palmMute: 50 } }), song('parts-rhythm', { arrangementType: 'rhythm', notes: 300, techniques: { palmMute: 9 } })],
+      }),
+      song('chords', { chordNames: ['G/B', 'C*', 'D'], chords: 100, notes: 0 }),
+    ];
+    expect(practiceSongs(notion('palm-mute'), songs).map((s) => s.part.id)).toEqual(['calm', 'parts-rhythm', 'busy']);
+    expect(practiceSongs(notion('g-and-c'), songs).map((s) => s.part.id)).toEqual(['chords']);
+    expect(practiceSongs(notion('four-chords'), songs)).toEqual([]);
+    // Nothing to look for in a notion with no chord nor technique.
+    expect(practiceSongs(notion('penta-box1'), songs)).toEqual([]);
+  });
+
+  it('plans a session a day: a warm-up, the notion to learn, a review, a song', () => {
+    const fresh = session(all, {}, {}, [], '2026-11-02');
+    // A beginner warms up on the first notion only if it is not the one to learn.
+    expect(fresh).toEqual({ warmup: null, notion: { chapter: 0, notion: 0, step: 0 }, review: null, song: null });
+    const first = all[0].notions[0];
+    const records = { [first.exercises[0].id]: 1, [first.exercises[1].id]: 1 };
+    const reviews = reviewed({}, first.id, '2026-10-20', true);
+    const songs = [song('open', { chordNames: [], techniques: {} }), song('pm', { techniques: { palmMute: 9 } })];
+    const day = session(all, records, reviews, songs, '2026-11-02');
+    expect(day.warmup).toEqual({ chapter: 0, notion: 0, step: 1 });
+    expect(day.notion).toEqual({ chapter: 0, notion: 1, step: 0 });
+    expect(day.review).toEqual({ chapter: 0, notion: 0, step: 1 });
+    // No song plays what the open strings teach (no chord, no technique).
+    expect(day.song).toBeNull();
+    const data = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) });
+    markDone('warmup', '2026-11-02');
+    markDone('warmup', '2026-11-02');
+    markDone('song', '2026-11-02');
+    expect([...doneToday('2026-11-02')]).toEqual(['warmup', 'song']);
+    expect(doneToday('2026-11-03').size).toBe(0);
+  });
+
+  it('judges each notion of chapters 3 to 8 on notes the exercises have', () => {
     for (const n of all.slice(2).flatMap((c) => c.notions)) {
       const chart = { notes: n.exercises[0].lesson.steps.filter((s) => !('chord' in s)), chords: n.exercises[0].lesson.steps.filter((s) => 'chord' in s) };
       const has = n.focus === 'all' || (n.focus === 'chords' ? chart.chords.length > 0 : chart.notes.some((x) => 'techniques' in x && x.techniques && (n.focus === 'slide' ? x.techniques.slideTo !== undefined : x.techniques[n.focus as 'bend'])));

@@ -1,7 +1,26 @@
+import type { SongEntry } from './engine/types';
 import { t } from './i18n';
 import type { LessonRecords } from './lessons';
 import { symbol } from './lexicon';
-import { type Chapter, type Exercise, learned, nextNotion, type Notion, open, passedExercise, stars, testOpen } from './parcours';
+import { partLabel } from './library';
+import {
+  type Chapter,
+  chapterLearned,
+  type Exercise,
+  learned,
+  needs,
+  nextNotion,
+  type Notion,
+  open,
+  passedExercise,
+  type Played,
+  practiceSongs,
+  required,
+  type Session,
+  type SessionItem,
+  stars,
+  testOpen,
+} from './parcours';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -14,22 +33,42 @@ const pct = (x: number): string => t('{n} %', { n: Math.round(x * 100) });
 const starText = (n: number): string => '★'.repeat(n) + '☆'.repeat(3 - n);
 
 export interface ParcoursHooks {
-  /** Plays exercise `step` of notion `notion` in chapter `chapter` (notion -1: the chapter's test). */
-  play(chapter: number, notion: number, step: number): void;
+  /** Plays exercise `step` of notion `notion` in chapter `chapter` (notion -1: the chapter's test),
+   * as `today`'s item of the day's session if it is one. */
+  play(chapter: number, notion: number, step: number, today?: SessionItem): void;
+  /** Plays the library's song `id` (a chart), as `today`'s item of the day's session if it is one. */
+  song(id: string, today?: SessionItem): void;
   /** Plays recording session `index` (of `lessons()`). */
   record(index: number): void;
   lexicon(): void;
 }
 
-/** The learning path: its chapters and notions, the one picked (the next to learn at first)
- * open on what it teaches and its three exercises; the recording sessions below. */
+/** What the Parcours shows. */
+export interface ParcoursView {
+  all: Chapter[];
+  records: LessonRecords;
+  recordings: { index: number; title: string; learn: string }[];
+  /** The learned notions to review today, the longest overdue first. */
+  due: Notion[];
+  /** The library's songs, to put the notions in practice. */
+  songs: readonly SongEntry[];
+  /** Today's session, and its items played through. */
+  session: Session;
+  done: ReadonlySet<SessionItem>;
+}
+
+/** The learning path: today's session, its chapters and notions, the one picked (the next to
+ * learn at first) open on what it teaches, its three exercises and the songs that use it; the
+ * recording sessions below. */
 export class ParcoursScreen {
   private all: Chapter[] = [];
   private records: LessonRecords = {};
-  private recordings: { index: number; title: string; learn: string }[] = [];
+  private recordings: ParcoursView['recordings'] = [];
   private picked: [number, number] = [0, 0];
-  /** The learned notions to review today, the longest overdue first. */
   private due: Notion[] = [];
+  private songs: readonly SongEntry[] = [];
+  private session: Session = { warmup: null, notion: null, review: null, song: null };
+  private done: ReadonlySet<SessionItem> = new Set();
 
   constructor(
     private readonly root: HTMLElement,
@@ -40,7 +79,12 @@ export class ParcoursScreen {
       const play = target.closest<HTMLElement>('[data-exercise]');
       if (play) {
         const [c, n, k] = play.dataset.exercise!.split(':').map(Number);
-        this.hooks.play(c, n, k);
+        this.hooks.play(c, n, k, play.dataset.today as SessionItem | undefined);
+        return;
+      }
+      const song = target.closest<HTMLElement>('[data-song]');
+      if (song) {
+        this.hooks.song(song.dataset.song!, song.dataset.today as SessionItem | undefined);
         return;
       }
       const rec = target.closest<HTMLElement>('[data-record]');
@@ -61,14 +105,10 @@ export class ParcoursScreen {
     });
   }
 
-  /** The path with its records and today's reviews, `picked` opened (by default the next notion
-   * to learn). */
-  show(all: Chapter[], records: LessonRecords, recordings: { index: number; title: string; learn: string }[], due: Notion[], picked?: [number, number]): void {
-    this.all = all;
-    this.records = records;
-    this.recordings = recordings;
-    this.due = due;
-    this.picked = picked ?? nextNotion(all, records);
+  /** The path, `picked` opened (by default the next notion to learn). */
+  show(view: ParcoursView, picked?: [number, number]): void {
+    ({ all: this.all, records: this.records, recordings: this.recordings, due: this.due, songs: this.songs, session: this.session, done: this.done } = view);
+    this.picked = picked ?? nextNotion(this.all, this.records);
     this.render();
   }
 
@@ -98,10 +138,12 @@ export class ParcoursScreen {
       head,
       el('p', 'help', t('Une notion à la fois : trois exercices, du pas à pas au morceau avec le groupe. Deux étoiles pour l’apprendre et ouvrir la suivante ; elles se gagnent sur les notes de la notion.')),
     );
+    const today = this.today();
+    if (today) panel.append(today);
     if (this.due.length) panel.append(this.reviews());
     this.all.forEach((chapter, c) => {
       panel.append(el('h3', 'parcours-chapter', t('Chapitre {n} · {title}', { n: c + 1, title: chapter.title })), el('p', 'help', chapter.blurb));
-      if (!chapter.notions.every((n) => learned(n, this.records)) && testOpen(this.all, c, this.records)) {
+      if (!chapterLearned(chapter, this.records) && testOpen(this.all, c, this.records)) {
         const test = el('div', 'chapter-test');
         const go = el('button', 'action small', t('Je sais déjà : passer le test'));
         go.type = 'button';
@@ -116,7 +158,7 @@ export class ParcoursScreen {
         const done = learned(notion, this.records);
         const isNext = c === nc && n === nn && !done;
         const isOpen = c === this.picked[0] && n === this.picked[1];
-        const item = el('li', `lesson notion${done ? ' passed' : ''}${isNext ? ' next' : ''}${isOpen ? ' open' : ''}${playable ? '' : ' locked'}`);
+        const item = el('li', `lesson notion${done ? ' passed' : ''}${isNext ? ' next' : ''}${isOpen ? ' open' : ''}${playable ? '' : ' locked'}${notion.bonus ? ' bonus' : ''}`);
         const top = el('button', 'lesson-top');
         top.type = 'button';
         top.dataset.notion = `${c}:${n}`;
@@ -124,6 +166,7 @@ export class ParcoursScreen {
         text.append(el('b', '', notion.title), el('span', '', notion.learn));
         const meta = el('small', 'notion-stars', starText(stars(notion, this.records)));
         if (notion.symbol) meta.append(el('span', 'notion-symbol', symbol(notion.symbol).glyph));
+        if (notion.bonus) meta.append(el('span', 'notion-bonus', t('Défi')));
         if (this.due.includes(notion)) meta.append(el('span', 'notion-due', t('À revoir')));
         text.append(meta);
         top.append(el('span', 'lesson-number', playable ? (done ? '✓' : String(n + 1)) : '🔒'), text);
@@ -150,6 +193,40 @@ export class ParcoursScreen {
     }
     this.root.replaceChildren(panel);
     this.root.querySelector<HTMLElement>('.lesson.open')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Today's session: each item to play, ticked once played through. */
+  private today(): HTMLElement | null {
+    const { warmup, notion, review, song } = this.session;
+    const rows: { item: SessionItem; label: string; title: string; play: Played | null; song?: string }[] = [];
+    const titled = (p: Played) => `${this.all[p.chapter].notions[p.notion].title} · ${this.all[p.chapter].notions[p.notion].exercises[p.step].title}`;
+    if (warmup) rows.push({ item: 'warmup', label: t('Échauffement'), title: titled(warmup), play: warmup });
+    if (notion) rows.push({ item: 'notion', label: t('Notion du jour'), title: titled(notion), play: notion });
+    if (review) rows.push({ item: 'review', label: t('Révision'), title: titled(review), play: review });
+    if (song) rows.push({ item: 'song', label: t('Un morceau'), title: t('{title} · pour « {notion} »', { title: song.song.title, notion: song.notion.title }), play: null, song: song.part.id });
+    if (!rows.length) return null;
+    const box = el('div', 'parcours-today');
+    const left = rows.filter((r) => !this.done.has(r.item)).length;
+    box.append(
+      el('h3', '', t('Séance du jour')),
+      el('p', 'help', left ? t('Un quart d’heure environ, dans l’ordre : de quoi progresser un peu chaque jour.') : t('Séance terminée : à demain !')),
+    );
+    const list = el('ol', 'today-list');
+    for (const r of rows) {
+      const done = this.done.has(r.item);
+      const item = el('li', `today-item${done ? ' done' : ''}`);
+      const text = el('span', 'lesson-text');
+      text.append(el('b', '', `${done ? '✓' : '○'} ${r.label}`), el('span', '', r.title));
+      const go = el('button', `action small${done ? '' : ' primary'}`, done ? t('Rejouer') : t('Jouer'));
+      go.type = 'button';
+      go.dataset.today = r.item;
+      if (r.play) go.dataset.exercise = `${r.play.chapter}:${r.play.notion}:${r.play.step}`;
+      else go.dataset.song = r.song!;
+      item.append(text, go);
+      list.append(item);
+    }
+    box.append(list);
+    return box;
   }
 
   /** Today's reviews: the notions due, and the first one to play. */
@@ -199,10 +276,38 @@ export class ParcoursScreen {
       card.append(el('span', 'symbol-glyph', s.glyph), text);
       box.append(card);
     }
-    const before = n > 0 ? this.all[c].notions[n - 1] : null;
+    const before = required(this.all[c].notions.slice(0, n)).pop() ?? null;
     if (!playable) box.append(el('p', 'notion-locked', before ? t('Apprends d’abord « {title} » (deux étoiles).', { title: before.title }) : t('Termine d’abord le chapitre précédent.')));
     const list = el('ol', 'exercise-list');
     notion.exercises.forEach((ex, k) => list.append(this.exercise(ex, c, n, k, playable)));
+    box.append(list);
+    const practice = this.practice(notion);
+    if (practice) box.append(practice);
+    return box;
+  }
+
+  /** The library's songs that use what notion `n` teaches, the easiest first. */
+  private practice(n: Notion): HTMLElement | null {
+    const need = needs(n);
+    if (!need.chords.length && !need.power && !need.techniques.length) return null;
+    const box = el('div', 'notion-practice');
+    box.append(el('h3', '', t('Mets-le en pratique')));
+    const found = practiceSongs(n, this.songs);
+    if (!found.length) {
+      box.append(el('p', 'help', t('Aucun morceau de ta bibliothèque ne l’utilise encore : importe-en un qui en a, il apparaîtra ici.')));
+      return box;
+    }
+    const list = el('ol', 'exercise-list');
+    for (const { song, part } of found) {
+      const item = el('li', 'exercise');
+      const text = el('span', 'lesson-text');
+      text.append(el('b', '', song.title), el('span', '', [song.artist, partLabel(part)].filter(Boolean).join(' · ')));
+      const go = el('button', 'action small', t('Jouer'));
+      go.type = 'button';
+      go.dataset.song = part.id;
+      item.append(text, go);
+      list.append(item);
+    }
     box.append(list);
     return box;
   }

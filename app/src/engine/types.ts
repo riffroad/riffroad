@@ -32,6 +32,11 @@ export interface SongEntry {
   levelNotes?: number[];
   /** The part of the song (section name, as written) where each of `phrases` is first played. */
   phraseSections?: string[];
+  /** Notes and chords played with each technique at the hardest level, by the chart's name for it
+   * ("hammerOn", "palmMute"…; "slide" for a slide). */
+  techniques?: Record<string, number>;
+  /** The chords strummed at the hardest level, by name, in the order they first come. */
+  chordNames?: string[];
   /** The song's other arrangements (rhythm, bass…), each with its own chart and progress. */
   others?: SongEntry[];
 }

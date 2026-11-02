@@ -7,7 +7,7 @@ mod cloud;
 mod google;
 mod import;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::fs;
@@ -19,6 +19,7 @@ use std::time::SystemTime;
 use import::{Importer, Job, JobState, Origin, Pipeline, Queue, ORIGIN};
 use opensmith_audio::{list_devices, Engine, EngineConfig, InputKind};
 use opensmith_dsp::{AmpKnobs, AmpModel, ChainParams};
+use opensmith_game::chart::Techniques;
 use opensmith_game::Chart;
 use opensmith_session::{load_track, load_track_with_stem, metronome, read_excerpt, Command, Devices, EngineBackend, Judging, RiffLoop, SessionConfig, SessionHandle, UiEvent};
 use serde::{Deserialize, Serialize};
@@ -78,6 +79,13 @@ struct SongEntry {
     phrase_sections: Vec<String>,
     /// Notes and chords played at each level 0..max_difficulty.
     level_notes: Vec<usize>,
+    /// Notes and chords played with each technique at the hardest level, by the chart's name for
+    /// it ("hammerOn", "palmMute"…; "slide" for a slide).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    techniques: BTreeMap<&'static str, usize>,
+    /// The chords strummed at the hardest level, by name, in the order they first come.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    chord_names: Vec<String>,
     /// The song's other arrangements: the charts beside this one (`song_chart.<part>.json`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     others: Vec<SongEntry>,
@@ -250,6 +258,8 @@ fn parse_entry(root: &Path, path: &Path, stamp: (SystemTime, u64)) -> Option<Par
     let phrases = phrase_names(&chart);
     let phrase_sections = phrase_sections(&chart, &phrases);
     let level_notes = level_notes(&chart);
+    let techniques = techniques_played(&chart);
+    let chord_names = chord_names(&chart);
     let entry = SongEntry {
         cover: cover.is_file().then(|| library_id(root, &cover)),
         id: library_id(root, path),
@@ -269,6 +279,8 @@ fn parse_entry(root: &Path, path: &Path, stamp: (SystemTime, u64)) -> Option<Par
         phrases,
         phrase_sections,
         level_notes,
+        techniques,
+        chord_names,
         others: Vec::new(),
     };
     Some(Parsed { stamp, entry, file: chart.meta.source.file })
@@ -280,6 +292,53 @@ fn phrase_names(chart: &Chart) -> Vec<String> {
     for p in &chart.phrases {
         if !p.name.starts_with("rest") && !names.contains(&p.name) {
             names.push(p.name.clone());
+        }
+    }
+    names
+}
+
+/// Notes and chords played with each technique at the hardest level.
+fn techniques_played(chart: &Chart) -> BTreeMap<&'static str, usize> {
+    let top = chart.arrangement.max_difficulty;
+    let mut out = BTreeMap::new();
+    let played = chart.notes.iter().filter(|n| n.levels[1] >= top).map(|n| &n.techniques);
+    let strummed = chart.chords.iter().filter(|c| c.levels[1] >= top).map(|c| &c.techniques);
+    for t in played.chain(strummed).flatten() {
+        for name in technique_names(t) {
+            *out.entry(name).or_insert(0) += 1;
+        }
+    }
+    out
+}
+
+/// The techniques `t` asks for, by the chart's names.
+fn technique_names(t: &Techniques) -> impl Iterator<Item = &'static str> {
+    let on = |x: Option<bool>| x == Some(true);
+    [
+        ("hammerOn", on(t.hammer_on)),
+        ("pullOff", on(t.pull_off)),
+        ("slide", t.slide_to.is_some()),
+        ("bend", t.bend.is_some_and(|b| b > 0.0)),
+        ("vibrato", on(t.vibrato)),
+        ("palmMute", on(t.palm_mute)),
+        ("mute", on(t.mute)),
+        ("harmonic", on(t.harmonic)),
+        ("pinchHarmonic", on(t.pinch_harmonic)),
+        ("tremolo", on(t.tremolo)),
+        ("tap", on(t.tap)),
+    ]
+    .into_iter()
+    .filter_map(|(name, used)| used.then_some(name))
+}
+
+/// The chords strummed at the hardest level, by name, in the order they first come.
+fn chord_names(chart: &Chart) -> Vec<String> {
+    let top = chart.arrangement.max_difficulty;
+    let mut names: Vec<String> = Vec::new();
+    for c in chart.chords.iter().filter(|c| c.levels[1] >= top) {
+        let Some(name) = chart.chord_templates.get(c.template).map(|t| t.name.trim()) else { continue };
+        if !name.is_empty() && !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
         }
     }
     names
@@ -1449,6 +1508,23 @@ mod tests {
             "beats":[{{"time":0.0,"bar":1}}],"sections":[],"phrases":[],"chordTemplates":[],
             "notes":[],"chords":[],"anchors":[],"handShapes":[]}}"#
         )
+    }
+
+    #[test]
+    fn a_song_tells_the_techniques_and_chords_it_plays_at_its_hardest_level() {
+        let mut song = Chart::from_json(&chart("Song", "song.mp3")).unwrap();
+        song.arrangement.max_difficulty = 2;
+        let template = |name: &str| opensmith_game::chart::ChordTemplate { name: name.into(), frets: vec![0; 6], fingers: vec![0; 6] };
+        song.chord_templates = vec![template("Em"), template(""), template("G"), template("C")];
+        let note = |levels: [u32; 2], techniques: Option<Techniques>| opensmith_game::chart::Note { time: 0.0, string: 0, fret: 3, sustain: 0.0, levels, techniques };
+        let pm = Techniques { palm_mute: Some(true), ..Techniques::default() };
+        let slide = Techniques { slide_to: Some(5), hammer_on: Some(false), bend: Some(0.0), ..Techniques::default() };
+        // Easy levels only: not counted.
+        song.notes = vec![note([0, 2], Some(pm.clone())), note([1, 2], Some(slide)), note([0, 1], Some(pm.clone())), note([2, 2], None)];
+        let chord = |template: usize, levels: [u32; 2], techniques: Option<Techniques>| opensmith_game::chart::Chord { time: 0.0, template, sustain: 0.0, levels, strum: None, techniques };
+        song.chords = vec![chord(2, [0, 2], None), chord(1, [2, 2], None), chord(0, [2, 2], Some(pm)), chord(2, [2, 2], None), chord(3, [0, 1], None)];
+        assert_eq!(techniques_played(&song), BTreeMap::from([("palmMute", 2), ("slide", 1)]));
+        assert_eq!(chord_names(&song), ["G", "Em"]);
     }
 
     #[test]

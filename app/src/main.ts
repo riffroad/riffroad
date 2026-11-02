@@ -79,7 +79,27 @@ import { lessonChart, lessons, loadLessons, paceFactor, recordLesson, type Lesso
 import { LexiconScreen, symbolCard } from './lexicon-screen';
 import { markSeen, seenSymbols, symbol, symbolsIn } from './lexicon';
 import { ParcoursScreen } from './parcours-screen';
-import { chapters, dueNotions, focusScore, learned, loadReviews, nextNotion, open as notionOpen, reviewed, REVIEWS, saveReviews, stars as notionStars, today } from './parcours';
+import {
+  chapterLearned,
+  chapters,
+  doneToday,
+  dueNotions,
+  focusScore,
+  learned,
+  loadReviews,
+  markDone,
+  nextNotion,
+  notionAfter,
+  open as notionOpen,
+  type Played,
+  reviewed,
+  REVIEWS,
+  saveReviews,
+  session,
+  type SessionItem,
+  stars as notionStars,
+  today,
+} from './parcours';
 import { backingFor } from './backing';
 import { interfaceSounds, SoundBoard } from './sfx';
 import { SOUND_NAMES, type SoundName } from './sounds';
@@ -1320,11 +1340,12 @@ function updateMenu(): void {
   const toReview = dueNotions(path, lessonRecords, reviews, today()).length;
   $('menuLessons').textContent = [
     earned
-      ? notions.every((n) => learned(n, lessonRecords))
+      ? path.every((c) => chapterLearned(c, lessonRecords))
         ? t('Tout le Parcours est appris : place aux morceaux !')
         : t('{n} étoiles · prochaine notion : {title}', { n: earned, title: path[nc].notions[nn].title })
       : t('Pour apprendre à jouer, en partant de zéro'),
     toReview ? tn(toReview, '{n} notion à revoir', '{n} notions à revoir') : '',
+    earned ? todayLine(path) : '',
   ]
     .filter(Boolean)
     .join(' · ');
@@ -1605,8 +1626,18 @@ const careerScreen = new CareerScreen($('career'), {
   back: () => showMenu(),
 });
 
+/** The item of today's session being played: ticked once played through. */
+let todayRun: { item: SessionItem; exercise: Played | null; song: string | null } | null = null;
+
 const parcoursScreen = new ParcoursScreen($('lessons'), {
-  play: (chapter, notion, step) => void startExercise(chapter, notion, step),
+  play: (chapter, notion, step, item) => {
+    todayRun = item ? { item, exercise: { chapter, notion, step }, song: null } : null;
+    void startExercise(chapter, notion, step);
+  },
+  song: (id, item) => {
+    todayRun = item ? { item, exercise: null, song: id } : null;
+    void start(id);
+  },
   record: (index) => void startLesson(index),
   lexicon: () => openLexicon(),
 });
@@ -1618,7 +1649,11 @@ const recordings = () => lessons().flatMap((l, index) => (l.record ? [{ index, t
 /** The learning path, `picked` notion open (by default the next one to learn). */
 function openLessons(picked?: [number, number]): void {
   const path = chapters();
-  parcoursScreen.show(path, lessonRecords, recordings(), dueNotions(path, lessonRecords, reviews, today()), picked);
+  const on = today();
+  parcoursScreen.show(
+    { all: path, records: lessonRecords, recordings: recordings(), due: dueNotions(path, lessonRecords, reviews, on), songs, session: session(path, lessonRecords, reviews, songs, on), done: doneToday(on) },
+    picked,
+  );
   setMode('lessons');
 }
 
@@ -1693,14 +1728,23 @@ async function startExercise(chapter: number, notion: number, step: number): Pro
   else restart();
 }
 
+/** How far today's session is, once the path is started. */
+function todayLine(path: ReturnType<typeof chapters>): string {
+  const on = today();
+  const items = Object.entries(session(path, lessonRecords, reviews, songs, on)).filter(([, v]) => v).map(([k]) => k as SessionItem);
+  const done = doneToday(on);
+  const n = items.filter((i) => done.has(i)).length;
+  return !items.length ? '' : n === items.length ? t('séance du jour terminée') : t('séance du jour : {n} sur {total}', { n, total: items.length });
+}
+
 /** The exercise after the one just played: the notion's next, else the next notion's first (if
- * it is open now); after a chapter's test, the next chapter's first notion. */
+ * it is open now, challenges aside); after a chapter's test, the next chapter's first notion. */
 function nextExercise(run: { chapter: number; notion: number; step: number }): { chapter: number; notion: number; step: number } | null {
   const all = chapters();
   if (run.notion < 0) return run.chapter + 1 < all.length && notionOpen(all, run.chapter + 1, 0, lessonRecords) ? { chapter: run.chapter + 1, notion: 0, step: 0 } : null;
   if (run.step + 1 < all[run.chapter].notions[run.notion].exercises.length) return { ...run, step: run.step + 1 };
-  const [c, k] = run.notion + 1 < all[run.chapter].notions.length ? [run.chapter, run.notion + 1] : [run.chapter + 1, 0];
-  return c < all.length && notionOpen(all, c, k, lessonRecords) ? { chapter: c, notion: k, step: 0 } : null;
+  const after = notionAfter(all, run.chapter, run.notion, lessonRecords);
+  return after ? { chapter: after[0], notion: after[1], step: 0 } : null;
 }
 
 /** End of an exercise: judged on the notion's notes, its best kept, the stars, the way on. */
@@ -2451,6 +2495,13 @@ function showResults(): void {
   if (moves && !inLesson() && !drillRun) $('records').textContent = [records, t('Ta fiche : {moves}', { moves })].filter(Boolean).join(' · ');
   if (lessonRun !== null) lessonVerdict(acc, judged, practice);
   if (exerciseRun) exerciseVerdict(judged, practice);
+  // An item of today's session played through, a note at least judged: ticked.
+  const run = todayRun;
+  const isToday = run && (run.exercise ? exerciseRun?.chapter === run.exercise.chapter && exerciseRun.notion === run.exercise.notion && exerciseRun.step === run.exercise.step : !exerciseRun && currentId === run.song);
+  if (isToday && judged) {
+    markDone(run.item, today());
+    todayRun = null;
+  }
   if (drillRun) drillVerdict(acc, judged);
   showAttackResults(grade);
   showTiming(view);
