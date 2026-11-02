@@ -28,6 +28,8 @@ export interface Lesson {
   record?: boolean;
   /** A career training drill (see career/training.ts): titled as it is. */
   drill?: boolean;
+  /** Titled as it is, not "Lesson n · …" (an exercise of the learning path). */
+  titled?: boolean;
 }
 
 /** Chords the lessons use: fret per string from the low E (-1: not played), and the fingers
@@ -331,7 +333,7 @@ export function lessonChart(lesson: Lesson, index: number, pace = 1): Chart {
   const last = steps.reduce((m, s) => Math.max(m, s.beat + (s.hold ?? 1)), 0);
   const beats = LEAD + Math.ceil(last / 4) * 4 + TAIL;
   const duration = beats * spb;
-  const title = lesson.record || lesson.drill ? lesson.title : t('Leçon {n} · {title}', { n: index + 1, title: lesson.title });
+  const title = lesson.record || lesson.drill || lesson.titled ? lesson.title : t('Leçon {n} · {title}', { n: index + 1, title: lesson.title });
   return {
     format: 'opensmith-chart',
     version: 1,

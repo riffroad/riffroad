@@ -29,7 +29,7 @@
         <nav class="menu-items">
           <button class="menu-item menu-lessons" data-action="open-lessons">
             <span class="menu-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5-10-5z"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/><path d="M22 9v6"/></svg></span>
-            <span class="menu-text"><b>Leçons</b><small id="menuLessons">Pour apprendre à jouer, en partant de zéro</small></span>
+            <span class="menu-text"><b>Parcours</b><small id="menuLessons">Pour apprendre à jouer, en partant de zéro</small></span>
           </button>
           <button class="menu-item menu-career" data-action="open-career">
             <span class="menu-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/></svg></span>
@@ -109,6 +109,15 @@
     <section id="world" class="screen" hidden></section>
 
     <section id="lessons" class="screen" hidden></section>
+    <section id="lexicon" class="screen" hidden></section>
+    <div id="symbols" class="symbols-overlay" hidden>
+      <div class="panel symbols-panel">
+        <h2>Nouveaux symboles dans ce morceau</h2>
+        <p class="help">Ce que l’autoroute va te demander. Ils restent dans le Lexique du Parcours.</p>
+        <div class="symbols-list"></div>
+        <button class="action primary" data-symbols="ok">Compris</button>
+      </div>
+    </div>
 
     <section id="importsScreen" class="screen" hidden>
       <div class="panel imports-panel">

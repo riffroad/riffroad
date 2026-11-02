@@ -75,8 +75,12 @@ import {
 import { guitarOf } from './guitars';
 import { award, careerTrophies, perfectSolo, songTrophies, TROPHIES, type GigFeat, type Trophy } from './trophies';
 import { announce, showTrophies } from './trophy-board';
-import { lessonChart, lessons, loadLessons, nextLesson, paceFactor, passed, recordLesson, type LessonPace } from './lessons';
-import { LessonsScreen } from './lessons-screen';
+import { lessonChart, lessons, loadLessons, paceFactor, recordLesson, type LessonPace } from './lessons';
+import { LexiconScreen, symbolCard } from './lexicon-screen';
+import { markSeen, seenSymbols, symbol, symbolsIn } from './lexicon';
+import { ParcoursScreen } from './parcours-screen';
+import { chapters, focusScore, learned, nextNotion, open as notionOpen, stars as notionStars } from './parcours';
+import { backingFor } from './backing';
 import { interfaceSounds, SoundBoard } from './sfx';
 import { SOUND_NAMES, type SoundName } from './sounds';
 import { settleChallenge, TIERS, type Challenge } from './career/challenge';
@@ -243,6 +247,10 @@ let studioRun: string | null = null;
 let playSpeed = 1;
 /** The lesson being played (its index), null for a song. */
 let lessonRun: number | null = null;
+/** The exercise of the learning path being played: chapter, notion, step (0 to 2). */
+let exerciseRun: { chapter: number; notion: number; step: number } | null = null;
+/** A lesson, a recording session or an exercise of the path: not a song of the library. */
+const inLesson = (): boolean => lessonRun !== null || exerciseRun !== null;
 /** A career training drill being played, on the card's rating it works. */
 let drillRun: SkillId | null = null;
 /** What the last song moved on the guitarist's card. */
@@ -261,6 +269,7 @@ const screens = {
   encore: $('encore'),
   trophies: $('trophies'),
   lessons: $('lessons'),
+  lexicon: $('lexicon'),
   world: $('world'),
 };
 let imports: Imports | null = null;
@@ -392,7 +401,7 @@ document.addEventListener('visibilitychange', () => {
 /** The account at the top right of the menus; the last status known. */
 const accountChip = new AccountChip(() => openSettings('account'));
 let accountStatus: CloudStatus | null = null;
-const menuModes = ['menu', 'library', 'imports', 'settings', 'career', 'trophies', 'amp', 'lessons', 'world'];
+const menuModes = ['menu', 'library', 'imports', 'settings', 'career', 'trophies', 'amp', 'lessons', 'lexicon', 'world'];
 
 const accountPanel = new AccountPanel($('accountSettings'), {
   changed: (status) => {
@@ -425,7 +434,7 @@ langSelect.replaceChildren(...LANGS.map((l) => new Option(l.label, l.id)));
 langSelect.value = lang();
 langSelect.addEventListener('change', () => setLang(langSelect.value as Lang));
 
-type Mode = 'menu' | 'library' | 'imports' | 'tuner' | 'settings' | 'amp' | 'riff' | 'play' | 'pause' | 'results' | 'career' | 'interlude' | 'encore' | 'trophies' | 'lessons' | 'world';
+type Mode = 'menu' | 'library' | 'imports' | 'tuner' | 'settings' | 'amp' | 'riff' | 'play' | 'pause' | 'results' | 'career' | 'interlude' | 'encore' | 'trophies' | 'lessons' | 'lexicon' | 'world';
 let mode: Mode = 'menu';
 let songs: SongEntry[] = [];
 let current: SongEntry | null = null;
@@ -610,7 +619,7 @@ function setMode(next: Mode): void {
     button('riff').textContent = riff ? t('Modifier le riff') : t('Loop Trainer');
     // On stage, no starting over and no Loop Trainer: only going on, or leaving.
     button('restart').hidden = !!gig;
-    button('riff').hidden = !!gig || lessonRun !== null;
+    button('riff').hidden = !!gig || inLesson();
     button('library').textContent = gig ? t('Quitter le concert') : backLabel();
     $('pauseGig').hidden = !gig;
     const free = gig ? gig.pauses < stageRules().freePauses : false;
@@ -625,7 +634,7 @@ function setMode(next: Mode): void {
 
 /** Where leaving a song goes back to. */
 function backLabel(): string {
-  return lessonRun !== null ? t('Leçons') : challengeRun || studioRun || drillRun ? t('Carrière') : t('Morceaux');
+  return inLesson() ? t('Parcours') : challengeRun || studioRun || drillRun ? t('Carrière') : t('Morceaux');
 }
 
 const quick = $<HTMLFormElement>('quick');
@@ -695,7 +704,7 @@ function setDifficulty(value: string): void {
   if (!chart || attack) return;
   forcedStep = value === 'auto' ? null : Number(value);
   // A song played from the library keeps it for next time (its card shows it).
-  if (currentId && !gig && lessonRun === null && drillRun === null) {
+  if (currentId && !gig && !inLesson() && drillRun === null) {
     setSongLevel(currentId, forcedStep);
     library.refreshLevel();
   }
@@ -1300,12 +1309,14 @@ function updateMenu(): void {
   $('menuTrophies').textContent = won
     ? t('{won} sur {total}', { won, total: TROPHIES.length })
     : t('{won} sur {total} : sur scène et sur les morceaux', { won, total: TROPHIES.length });
-  const all = lessons().filter((l) => !l.record);
-  const done = all.filter((l) => passed(l, lessonRecords)).length;
-  $('menuLessons').textContent = done
-    ? done === all.length
-      ? t('Toutes réussies : place aux morceaux !')
-      : t('{done} sur {total} réussies · prochaine : {title}', { done, total: all.length, title: all[nextLesson(all, lessonRecords)].title })
+  const path = chapters();
+  const notions = path.flatMap((c) => c.notions);
+  const earned = notions.reduce((sum, n) => sum + notionStars(n, lessonRecords), 0);
+  const [nc, nn] = nextNotion(path, lessonRecords);
+  $('menuLessons').textContent = earned
+    ? notions.every((n) => learned(n, lessonRecords))
+      ? t('Tout le Parcours est appris : place aux morceaux !')
+      : t('{n} étoiles · prochaine notion : {title}', { n: earned, title: path[nc].notions[nn].title })
     : t('Pour apprendre à jouer, en partant de zéro');
   const on = onAt(liveEvents, new Date())[0];
   $('menuEvent').hidden = !on;
@@ -1344,6 +1355,7 @@ function showMenu(): void {
   sfx.room(null);
   if (lessonRun !== null) recordFor(false);
   lessonRun = null;
+  exerciseRun = null;
   drillRun = null;
   challengeRun = null;
   studioRun = null;
@@ -1371,6 +1383,7 @@ function openImports(): void {
 
 async function start(id: string, riffOpening = false): Promise<void> {
   lessonRun = null;
+  exerciseRun = null;
   drillRun = null;
   recordFor(false);
   // Wait mode is the lessons': a song keeps its time.
@@ -1433,6 +1446,8 @@ async function start(id: string, riffOpening = false): Promise<void> {
   const built = perf.step(t('piste de notes'));
   highway.setChart(chart);
   built();
+  // Symbols never met: what they ask, before the count-in.
+  if (!autopiloting()) await explainSymbols(chart);
   if (gig) {
     const venue = gig.offer.venue.name;
     hud.setGig(gig.encore ? t('{venue} · rappel', { venue }) : t('{venue} · morceau {n} sur {total}', { venue, n: gig.index + 1, total: gig.setlist.length }));
@@ -1580,23 +1595,140 @@ const careerScreen = new CareerScreen($('career'), {
   back: () => showMenu(),
 });
 
-const lessonsScreen = new LessonsScreen($('lessons'), (index, pace) => {
-  engine.unlock();
-  void startLesson(index, pace);
+const parcoursScreen = new ParcoursScreen($('lessons'), {
+  play: (chapter, notion, step) => void startExercise(chapter, notion, step),
+  record: (index) => void startLesson(index),
+  lexicon: () => openLexicon(),
 });
+const lexiconScreen = new LexiconScreen($('lexicon'), () => openLessons());
 
-/** The lessons, the one just played (or the next to pass) opened. */
-function openLessons(picked?: number): void {
-  lessonsScreen.show(lessons(), lessonRecords, picked);
+/** The recording sessions of `lessons()`, by index. */
+const recordings = () => lessons().flatMap((l, index) => (l.record ? [{ index, title: l.title, learn: l.learn }] : []));
+
+/** The learning path, `picked` notion open (by default the next one to learn). */
+function openLessons(picked?: [number, number]): void {
+  parcoursScreen.show(chapters(), lessonRecords, recordings(), picked);
   setMode('lessons');
+}
+
+function openLexicon(): void {
+  lexiconScreen.show(chapters(), lessonRecords);
+  setMode('lexicon');
+}
+
+/** The symbols of `chart` never met, explained on a card before the song; resolves once read. */
+function explainSymbols(chart: Chart): Promise<void> {
+  const seen = seenSymbols();
+  const fresh = symbolsIn(chart).filter((id) => !seen.has(id));
+  if (!fresh.length) return Promise.resolve();
+  const box = $('symbols');
+  box.querySelector('.symbols-list')!.replaceChildren(...fresh.map((id) => symbolCard(symbol(id))));
+  box.hidden = false;
+  const ok = box.querySelector<HTMLButtonElement>('[data-symbols="ok"]')!;
+  ok.focus();
+  return new Promise((done) => {
+    ok.onclick = () => {
+      markSeen(fresh);
+      box.hidden = true;
+      done();
+    };
+  });
+}
+
+/** Exercise `step` of notion `notion` in chapter `chapter`, after the tuner: over its band (else
+ * the metronome), in wait mode step by step; judged on the notion's own notes. */
+async function startExercise(chapter: number, notion: number, step: number): Promise<void> {
+  const n = chapters()[chapter]?.notions[notion];
+  const ex = n?.exercises[step];
+  if (!n || !ex) return;
+  exerciseRun = { chapter, notion, step };
+  lessonRun = null;
+  drillRun = null;
+  recordFor(false);
+  current = null;
+  currentId = null;
+  riffFirst = false;
+  riff = null;
+  playSpeed = 1;
+  showRiff();
+  attack = null;
+  attackNext = null;
+  forcedStep = null;
+  levelsForced = false;
+  challengeRun = null;
+  studioRun = null;
+  attackHud.show(null);
+  applyDemoSettings();
+  // The notion's card explained its symbol.
+  if (n.symbol) markSeen([n.symbol]);
+  try {
+    if (engine instanceof TauriEngine) engine.setWait(ex.wait);
+    waitHinted = false;
+    const lesson = { ...ex.lesson, title: `${n.title} · ${ex.title}`, titled: true as const };
+    chart = await engine.loadLesson(lessonChart(lesson, 0, ex.pace), ex.backing ? backingFor(ex.lesson, ex.pace, ex.backing, ex.roots) : undefined);
+  } catch (e) {
+    exerciseRun = null;
+    notice(t('Impossible d’ouvrir l’exercice : {error}', { error: (e as Error).message }));
+    sfx.ui('error');
+    return;
+  }
+  heldTuning = chart.arrangement.tuning.strings;
+  view = new GameView(chart);
+  highway.setChart(chart);
+  hud.toast({ kind: 'phrase', title: `${n.title} · ${ex.title}`, detail: n.how[0] });
+  if (tunerNeeded(chart)) openTuner(chart);
+  else restart();
+}
+
+/** The exercise after the one just played: the notion's next, else the next notion's first (if
+ * it is open now). */
+function nextExercise(run: { chapter: number; notion: number; step: number }): { chapter: number; notion: number; step: number } | null {
+  const all = chapters();
+  if (run.step + 1 < all[run.chapter].notions[run.notion].exercises.length) return { ...run, step: run.step + 1 };
+  const [c, k] = run.notion + 1 < all[run.chapter].notions.length ? [run.chapter, run.notion + 1] : [run.chapter + 1, 0];
+  return c < all.length && notionOpen(all, c, k, lessonRecords) ? { chapter: c, notion: k, step: 0 } : null;
+}
+
+/** End of an exercise: judged on the notion's notes, its best kept, the stars, the way on. */
+function exerciseVerdict(judged: boolean, practice: boolean): void {
+  const run = exerciseRun!;
+  const notion = chapters()[run.chapter].notions[run.notion];
+  const ex = notion.exercises[run.step];
+  const score = view && chart ? focusScore(view.items, chart, notion.focus) : { hits: 0, judged: 0 };
+  const acc = score.judged ? score.hits / score.judged : 0;
+  const before = learned(notion, lessonRecords);
+  if (judged && !practice && !autopiloting()) lessonRecords = recordLesson(lessonRecords, ex.id, acc);
+  const ok = judged && !practice && acc >= ex.goal;
+  const nowLearned = !before && learned(notion, lessonRecords);
+  if (ok) {
+    window.setTimeout(() => sfx.cue('fanfare'), 500);
+    sfx.applause(nowLearned ? 0.8 : 0.4);
+  }
+  const pct = (x: number) => t('{n} %', { n: Math.round(x * 100) });
+  $('verdict').textContent = nowLearned ? t('Notion apprise !') : ok ? t('Exercice réussi !') : practice ? t('Entraînement au ralenti') : t('Encore un essai !');
+  const next = ok ? nextExercise(run) : null;
+  const all = chapters();
+  const nextTitle = next && (next.chapter !== run.chapter || next.notion !== run.notion ? all[next.chapter].notions[next.notion].title : all[next.chapter].notions[next.notion].exercises[next.step].title);
+  const starsLine = t('{stars} sur « {title} »', { stars: '★'.repeat(notionStars(notion, lessonRecords)) + '☆'.repeat(3 - notionStars(notion, lessonRecords)), title: notion.title });
+  $('records').textContent = ok
+    ? [starsLine, nextTitle ? t('Ensuite : {title}', { title: nextTitle }) : t('Tout ce qui est ouvert est réussi.')].join(' · ')
+    : practice
+      ? t('Reviens à 100 % de la vitesse pour réussir l’exercice.')
+      : t('Sur les notes de la notion : {acc}, l’objectif est {goal}.', { acc: pct(judged ? acc : 0), goal: pct(ex.goal) });
+  $('records').classList.toggle('new', ok);
+  const go = screens.results.querySelector<HTMLElement>('[data-action="next-lesson"]')!;
+  go.textContent = next && (next.chapter !== run.chapter || next.notion !== run.notion) ? t('Notion suivante') : t('Exercice suivant');
+  go.hidden = !next;
+  screens.results.querySelector<HTMLElement>('[data-action="restart"]')!.classList.toggle('primary', go.hidden);
 }
 
 /** Lesson `index`, played over its metronome after the tuner, at the `pace` chosen on the
  * lessons screen (in wait mode, the song stops on each note until it is played). */
-async function startLesson(index: number, pace: LessonPace = lessonsScreen.pace): Promise<void> {
+async function startLesson(index: number, pace: LessonPace = 'normal'): Promise<void> {
   const lesson = lessons()[index];
   if (!lesson) return;
   lessonRun = index;
+  exerciseRun = null;
   drillRun = null;
   recordFor(lesson.record ?? false);
   current = null;
@@ -1635,6 +1767,7 @@ async function startDrill(skill: SkillId): Promise<void> {
   await careerLoaded;
   const lesson = drillFor(skill, ratingOf(career.skills, skill));
   lessonRun = null;
+  exerciseRun = null;
   drillRun = skill;
   recordFor(false);
   current = null;
@@ -1994,7 +2127,7 @@ function restart(): void {
   attack?.reset();
   attackHud.show(attack);
   applyMaster();
-  lead = lessonRun === null && drillRun === null ? leadIn(chart, LOOKAHEAD, LEAD_IN) : LEAD_IN;
+  lead = !inLesson() && drillRun === null ? leadIn(chart, LOOKAHEAD, LEAD_IN) : LEAD_IN;
   engine.seek(-lead);
   engine.play();
   sfx.countIn(chart, -lead);
@@ -2033,10 +2166,13 @@ function toLibrary(): void {
   view = null;
   highway.setChart(null);
   // The weekly challenge goes back to the career it belongs to.
-  if (lessonRun !== null) {
-    const index = lessonRun;
+  if (exerciseRun) {
+    const { chapter, notion } = exerciseRun;
+    exerciseRun = null;
+    openLessons([chapter, notion]);
+  } else if (lessonRun !== null) {
     lessonRun = null;
-    openLessons(index);
+    openLessons();
   } else if (challengeRun || studioRun || drillRun) {
     challengeRun = null;
     studioRun = null;
@@ -2226,16 +2362,16 @@ function showResults(): void {
   gradeEl.classList.add('reveal');
   $('verdict').textContent = verdicts[grade];
   sfx.cue('grade');
-  if (lessonRun === null && playSpeed >= 1) sfx.applause(({ S: 1, A: 0.75, B: 0.5 } as Record<string, number>)[grade] ?? 0);
+  if (!inLesson() && playSpeed >= 1) sfx.applause(({ S: 1, A: 0.75, B: 0.5 } as Record<string, number>)[grade] ?? 0);
   // The card measured on what was just played.
   measureSkills();
   // Into the song's progress: levels for next time, records, mastery.
   let records = '';
   // Slowed down, a play is practice: no records, no rehearsal, no trophy.
   const practice = playSpeed < 1;
-  const outcome = attack || practice || lessonRun !== null ? null : recordSong(grade);
+  const outcome = attack || practice || inLesson() ? null : recordSong(grade);
   document.querySelector('#results .challenge-result.take')?.remove();
-  if (!practice && lessonRun === null) {
+  if (!practice && !inLesson()) {
     // A song of the repertoire played through: a rehearsal; a studio take when recording.
     rehearseSong();
     if (studioRun && studioRun === currentId) settleTake(studioRun, accuracy(view.score));
@@ -2258,12 +2394,13 @@ function showResults(): void {
   }
   $('records').textContent = records;
   $('records').classList.toggle('new', records.includes('!'));
-  screens.results.querySelector<HTMLElement>('[data-action="riff-weakest"]')!.hidden = lessonRun !== null;
+  screens.results.querySelector<HTMLElement>('[data-action="riff-weakest"]')!.hidden = inLesson();
   screens.results.querySelector<HTMLElement>('[data-action="next-lesson"]')!.hidden = true;
   screens.results.querySelector<HTMLElement>('[data-action="restart"]')!.classList.add('primary');
   const moves = movesLine();
-  if (moves && lessonRun === null && !drillRun) $('records').textContent = [records, t('Ta fiche : {moves}', { moves })].filter(Boolean).join(' · ');
+  if (moves && !inLesson() && !drillRun) $('records').textContent = [records, t('Ta fiche : {moves}', { moves })].filter(Boolean).join(' · ');
   if (lessonRun !== null) lessonVerdict(acc, judged, practice);
+  if (exerciseRun) exerciseVerdict(judged, practice);
   if (drillRun) drillVerdict(acc, judged);
   showAttackResults(grade);
   showTiming(view);
@@ -2387,7 +2524,10 @@ document.addEventListener('click', (e) => {
   else if (action === 'open-trophies') void openTrophies();
   else if (action === 'open-world') openWorld();
   else if (action === 'open-lessons') openLessons();
-  else if (action === 'next-lesson' && lessonRun !== null) void startLesson(lessonRun + 1);
+  else if (action === 'next-lesson' && exerciseRun) {
+    const next = nextExercise(exerciseRun);
+    if (next) void startExercise(next.chapter, next.notion, next.step);
+  } else if (action === 'next-lesson' && lessonRun !== null) void startLesson(lessonRun + 1);
   else if (action === 'encore-song') playEncore((e.target as HTMLElement).closest<HTMLElement>('[data-song]')?.dataset.song ?? '');
   else if (action === 'encore-skip') finishGig('played');
   else if (action === 'gig-next') nextGigSong();
@@ -2445,13 +2585,13 @@ window.addEventListener('keydown', (e) => {
   }
   if (mode === 'lessons' && (e.key === 'Enter' || e.key === ' ') && !(e.target instanceof HTMLButtonElement)) {
     e.preventDefault();
-    lessonsScreen.startPicked();
+    parcoursScreen.startPicked();
     return;
   }
   switch (e.key) {
     case 'l':
     case 'L':
-      if (!gig && lessonRun === null && (mode === 'play' || mode === 'pause' || mode === 'results')) openRiff();
+      if (!gig && !inLesson() && (mode === 'play' || mode === 'pause' || mode === 'results')) openRiff();
       break;
     case 'ArrowUp':
     case 'ArrowDown':
@@ -2483,6 +2623,7 @@ window.addEventListener('keydown', (e) => {
       else if (gig && mode === 'interlude') nextGigSong();
       else if (gig && mode === 'encore') finishGig('played');
       else if (mode === 'career' || mode === 'lessons') showMenu();
+      else if (mode === 'lexicon') openLessons();
       else if (mode === 'library') {
         if (library.cardOpen) library.closeCard();
         else showMenu();

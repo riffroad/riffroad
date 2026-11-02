@@ -3269,6 +3269,134 @@ body:not(.live) .live-only {
   font-size: 12px;
 }
 
+/* The learning path (parcours-screen.ts): chapters, notions with their stars and symbol, the
+   opened notion's exercises; the lexicon of the highway's symbols (lexicon-screen.ts). */
+.parcours-chapter {
+  margin: 22px 0 2px;
+  font-size: 16px;
+}
+
+.notion.locked .lesson-top {
+  opacity: 0.55;
+}
+
+.notion-stars {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent);
+  letter-spacing: 0.12em;
+}
+
+.notion-symbol,
+.symbol-glyph {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
+  font: 700 12px/1 -apple-system, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+.notion-why {
+  margin: 2px 0 8px;
+  font-size: 13.5px;
+  font-style: italic;
+}
+
+.notion-locked {
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.exercise-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.exercise {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.exercise.passed {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.exercise .lesson-text small {
+  color: var(--muted);
+}
+
+.symbol-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.symbol-card .symbol-glyph {
+  min-width: 40px;
+  height: 34px;
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.symbol-text {
+  display: grid;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.symbol-text small,
+.symbol-how {
+  color: var(--muted);
+}
+
+.symbol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 6px;
+}
+
+/* New symbols, before a song: over everything until read. */
+.symbols-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 4, 10, 0.72);
+}
+
+.symbols-panel {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+
+.symbols-panel .symbols-list {
+  margin: 8px 0 14px;
+}
+
 /* Trophies */
 
 .trophies-panel {
