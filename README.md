@@ -2,7 +2,7 @@
 
 *Français : [README.fr.md](README.fr.md)*
 
-![Riffroad: a real guitar on a 3D note highway, from the garage to the stadium](docs/trailer.gif)
+![Riffroad: a real guitar on a 3D note highway, an MP3's chords level by level, from the garage to the stadium](docs/trailer.gif)
 
 A guitar game for macOS. Plug in a real electric guitar, drop in any MP3, and play it on a 3D
 note highway, with real-time note detection, an amp simulator and a career from the garage to
