@@ -44,12 +44,13 @@ export function preferredPart(song: SongEntry, kind: string | null): SongEntry {
 }
 
 /** Where a song's notes come from, which says how much to trust them. */
-export type SongSource = 'tab' | 'chart' | 'ai' | 'sheet';
+export type SongSource = 'tab' | 'chart' | 'ai' | 'sheet' | 'riffroad';
 
 export function sourceOf(song: SongEntry): SongSource {
   const kind = song.source ?? 'audio';
   if (kind === 'guitarpro') return song.hasAudio === false ? 'sheet' : 'tab';
   if (kind === 'synth') return 'tab'; // the demo song: its exact notes
+  if (kind === 'generated') return 'riffroad';
   if (kind === 'audio') return 'ai';
   return 'chart'; // a plugin's: written by hand for this recording
 }
@@ -68,7 +69,17 @@ export const SOURCES: Record<SongSource, { label: string; about: string }> = {
   chart: { label: t('Chart'), about: t('Notes écrites à la main pour cet enregistrement (feedpak ou plugin).') },
   ai: { label: t('IA'), about: t('Notes transcrites automatiquement depuis l’enregistrement : il peut y avoir des erreurs.') },
   sheet: { label: t('Tablature seule'), about: t('Une tablature sans enregistrement : on joue sans la musique.') },
+  riffroad: { label: 'Riffroad', about: t('Composé et enregistré par Riffroad : les notes exactes de sa guitare, jouées sur de vraies guitares.') },
 };
+
+/** The styles Riffroad composes in (`compose_song`), as the picker shows them. */
+export const COMPOSE_STYLES: readonly { key: string; label: string; about: string }[] = [
+  { key: 'rock', label: 'Rock', about: t('Riffs en power chords, un refrain, un solo.') },
+  { key: 'punk', label: 'Punk', about: t('Rapide : des accords en croches, étouffés puis ouverts.') },
+  { key: 'blues', label: 'Blues', about: t('Le shuffle sur douze mesures, un solo.') },
+  { key: 'metal', label: 'Metal', about: t('Des galops étouffés sur le mi grave, un solo.') },
+  { key: 'ballad', label: t('Ballade'), about: t('Des accords ouverts, en arpèges puis grattés, au son clair.') },
+];
 
 export type SortKey = 'recent' | 'title' | 'artist' | 'mastery';
 
@@ -147,6 +158,8 @@ export interface LibraryHooks {
   chords?(song: SongEntry): Promise<SongChord[]>;
   /** Replaces chords everywhere in it; resolves with how many beats changed, the library read again. */
   fixChords?(song: SongEntry, changes: string[]): Promise<number>;
+  /** Composes and records a song in a style (`COMPOSE_STYLES`), the library read again: its id. */
+  compose?(style: string): Promise<string>;
   /** Writes the song as a .feedpak where the player chooses: the file, or null if they did not. */
   exportFeedpak?(song: SongEntry): Promise<string | null>;
 }
@@ -183,6 +196,7 @@ const TEMPLATE = `
     <h2 data-el="title">${t('Morceaux')}</h2>
     <input type="search" data-el="search" placeholder="${t('Titre, artiste, album…')}" spellcheck="false" autocomplete="off" />
     <select data-el="sort" aria-label="${t('Trier')}"></select>
+    <button class="action small lib-compose" data-lib="compose" data-el="compose" hidden>${t('Composer')}</button>
     <button class="action small primary lib-import" data-action="open-imports">${t('Importer')}</button>
   </header>
   <div class="library-filters" data-el="filters"></div>
@@ -250,6 +264,7 @@ export class Library {
   ) {
     root.innerHTML = TEMPLATE;
     root.querySelectorAll<HTMLElement>('[data-el]').forEach((e) => (this.el[e.dataset.el!] = e));
+    this.el.compose.hidden = !hooks.compose;
     const sort = this.el.sort as HTMLSelectElement;
     sort.replaceChildren(...SORTS.map((s) => new Option(s.label, s.key)));
     sort.addEventListener('change', () => this.set({ sort: sort.value as SortKey }));
@@ -271,6 +286,9 @@ export class Library {
       switch (target.dataset.lib) {
         case 'back':
           this.hooks.back();
+          break;
+        case 'compose':
+          this.askStyle();
           break;
         case 'source':
           this.set({ source: target.dataset.value as SongQuery['source'] });
@@ -301,6 +319,63 @@ export class Library {
           break;
       }
     });
+  }
+
+  /** Which style to compose in, over the library; then the song made, its card open. */
+  private askStyle(): void {
+    const compose = this.hooks.compose;
+    if (!compose) return;
+    const box = document.createElement('div');
+    box.className = 'cloud-ask compose-ask';
+    box.innerHTML = `
+      <div class="panel" role="dialog" aria-modal="true">
+        <h3>${t('Composer un morceau')}</h3>
+        <p data-el="about">${t('Riffroad écrit un morceau dans ce style et l’enregistre avec son groupe : deux guitaristes sur de vraies guitares, une basse, une batterie. Ses notes sont exactes.')}</p>
+        <div class="compose-styles">${COMPOSE_STYLES.map((s) => `<button class="action" data-style="${s.key}"><b>${s.label}</b><span>${s.about}</span></button>`).join('')}</div>
+        <div class="row-actions"><button class="action small" data-style="">${t('Annuler')}</button></div>
+      </div>`;
+    const close = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !box.classList.contains('busy')) done();
+    };
+    const done = () => {
+      box.remove();
+      document.removeEventListener('keydown', close);
+    };
+    document.addEventListener('keydown', close);
+    box.addEventListener('click', (e) => {
+      const style = (e.target as HTMLElement).closest<HTMLElement>('[data-style]')?.dataset.style;
+      if (style === undefined || box.classList.contains('busy')) return;
+      if (!style) return done();
+      const label = COMPOSE_STYLES.find((s) => s.key === style)?.label ?? style;
+      box.classList.add('busy');
+      box.querySelector('[data-el="about"]')!.textContent = t('Riffroad compose un morceau {style} et l’enregistre… quelques secondes.', { style: label });
+      compose(style)
+        .then((id) => {
+          done();
+          this.reveal(id);
+        })
+        .catch((err: unknown) => {
+          done();
+          this.status(t('Le morceau n’a pas pu être composé : {error}', { error: String(err) }), true);
+        });
+    });
+    document.body.append(box);
+  }
+
+  /** The song (or arrangement) `id` in view, its card open: the search and filters cleared if they
+   * hide it. */
+  reveal(id: string): void {
+    const song = this.songs.find((s) => partsOf(s).some((p) => p.id === id));
+    if (!song) return;
+    if (!this.tileOf(song)) {
+      this.query = { ...EVERY_SONG, sort: this.query.sort };
+      (this.el.search as HTMLInputElement).value = '';
+      this.render(true);
+    }
+    const tile = this.tileOf(song);
+    if (!tile) return;
+    tile.scrollIntoView({ block: 'center' });
+    this.openCard(song, tile, partsOf(song).find((p) => p.id === id) ?? song);
   }
 
   get cardOpen(): boolean {

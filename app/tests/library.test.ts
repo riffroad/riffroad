@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aboutSource, chordLabel, EVERY_SONG, FIRST_TILES, fold, parseChord, partLabel, partMoves, partsOf, phraseMastery, playedPart, preferredPart, selectSongs, SOURCES, sourceOf, tileBatches, tuningsOf } from '../src/library';
+import { aboutSource, chordLabel, COMPOSE_STYLES, EVERY_SONG, FIRST_TILES, fold, parseChord, partLabel, partMoves, partsOf, phraseMastery, playedPart, preferredPart, selectSongs, SOURCES, sourceOf, tileBatches, tuningsOf } from '../src/library';
 import { findSong, type SongEntry } from '../src/engine/types';
 import { emptyProgress, type Progress } from '../src/progress';
 
@@ -63,6 +63,13 @@ describe('library', () => {
 
   it('tells where the notes come from', () => {
     expect(SONGS.map(sourceOf)).toEqual(['ai', 'tab', 'chart', 'sheet']);
+    const composed = song('g', 'Silver Storm', 'Riffroad', { source: 'generated' });
+    expect(sourceOf(composed)).toBe('riffroad');
+    expect(aboutSource(composed)).toBe(SOURCES.riffroad.about);
+  });
+
+  it('composes in the five styles the engine writes', () => {
+    expect(COMPOSE_STYLES.map((s) => s.key)).toEqual(['rock', 'punk', 'blues', 'metal', 'ballad']);
   });
 
   it('finds songs by any word, accents or not', () => {

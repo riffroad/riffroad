@@ -14,6 +14,7 @@ environment).
 | [cpal](https://github.com/RustAudio/cpal) | Apache-2.0 | CoreAudio input and output |
 | [realfft](https://github.com/HEnquist/realfft), [rtrb](https://github.com/mgeier/rtrb), [hound](https://github.com/ruuda/hound), serde, clap and the other Rust crates in `Cargo.lock` and `app/src-tauri/Cargo.lock` | MIT and/or Apache-2.0 (a few BSD, ISC, Zlib, Unicode) | engine and app |
 | cssparser, selectors, dtoa-short, option-ext (Rust crates pulled in by Tauri, unmodified) | MPL-2.0 | webview tooling |
+| [vorbis_rs](https://github.com/ComunidadAylas/vorbis-rs), with the libvorbis (aoTuV) and libogg it builds in | BSD-3-Clause | writes the songs Riffroad composes as Ogg Vorbis |
 
 The MPL-2.0 crates are used unmodified; their source is on [crates.io](https://crates.io).
 
@@ -22,8 +23,13 @@ Riffroad composes and plays on single notes recorded in **Guitar-TECHS** (Hegel 
 Wallace Abreu, Ryan M. Corey and Iran R. Roman, "Guitar-TECHS: An Electric Guitar Dataset
 Covering Techniques, Musical Excerpts, Chords and Scales Using a Diverse Array of Hardware",
 2025, [guitar-techs.github.io](https://guitar-techs.github.io)), licensed
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The recordings themselves are not
-shipped.
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+The songs Riffroad composes are played on 384 of those notes, shipped in the app
+(`engine-rt/session/assets/guitar-notes.ogg`): two of its players, every string at frets 0
+to 15, plain and palm-muted, as each played them on their guitar's direct input. Each note
+was cut on its attack, tuned to its pitch and set to one loudness, and the second player's
+guitar evened out toward the first's (`models/guitar-notes/build.py`).
 
 ## Installed on the player's Mac on the first import
 

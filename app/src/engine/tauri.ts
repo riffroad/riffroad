@@ -100,6 +100,11 @@ export class TauriEngine implements Engine {
     return this.index.songs;
   }
 
+  /** A song Riffroad composes and records in `style`, put in the library: its id. */
+  composeSong(style: string): Promise<string> {
+    return invoke<string>('compose_song', { style });
+  }
+
   /** The chords of an MP3's chord chart, to correct them (none for any other chart). */
   songChords(id: string): Promise<SongChord[]> {
     return invoke<SongChord[]>('song_chords', { id });

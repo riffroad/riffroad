@@ -4986,6 +4986,34 @@ body:not(.live) .live-only {
   color: var(--muted);
 }
 
+/* Composing a song: the styles to pick from, then a wait. */
+.compose-styles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.compose-styles .action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 10px 12px;
+}
+
+.compose-styles .action span {
+  font-size: 0.82em;
+  color: var(--muted);
+}
+
+.compose-ask.busy .compose-styles,
+.compose-ask.busy .row-actions {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 /* Response times (Shift+P): over everything, never in the way. */
 .perf-panel {
   position: fixed;

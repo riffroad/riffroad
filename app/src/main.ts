@@ -1290,6 +1290,15 @@ const library = new Library($('library'), {
     if (mode === 'library') library.refresh(songs, progress);
     return changed;
   },
+  compose:
+    engine instanceof TauriEngine
+      ? async (style) => {
+          const id = await (engine as TauriEngine).composeSong(style);
+          await loadLibrary();
+          if (mode === 'library') library.refresh(songs, progress);
+          return id;
+        }
+      : undefined,
   exportFeedpak: async (song) => {
     if (!(engine instanceof TauriEngine)) return null;
     const path = await save({ defaultPath: `${song.artist} - ${song.title}.feedpak`, filters: [{ name: 'feedpak', extensions: ['feedpak'] }] });

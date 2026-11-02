@@ -99,8 +99,8 @@ pub fn render(voices: &[Voice], seconds: f64, sound: &GuitarSound, seed: u64) ->
     render_with(voices, seconds, sound, seed, None)
 }
 
-/// `render`, each voice that has a recording in `samples` played from it (bends and slides,
-/// which recordings cannot follow, and dead notes stay synthesised).
+/// `render`, each voice that has a recording in `samples` played from it, read faster or slower
+/// where its pitch moves (a bend, a slide, a vibrato); dead notes stay synthesised.
 pub fn render_with(voices: &[Voice], seconds: f64, sound: &GuitarSound, seed: u64, samples: Option<&dyn Samples>) -> Vec<f32> {
     let sr = sound.sample_rate;
     let mut out = vec![0.0f32; (seconds * sr).ceil() as usize];
@@ -108,7 +108,7 @@ pub fn render_with(voices: &[Voice], seconds: f64, sound: &GuitarSound, seed: u6
     for v in voices {
         let recording = match (samples, v.recorded, v.excitation) {
             (_, _, Excitation::Dead { .. }) => None,
-            (Some(bank), Some((fret, kind, choice)), _) if v.glide.is_empty() => bank.note(v.string, fret, kind, choice),
+            (Some(bank), Some((fret, kind, choice)), _) => bank.note(v.string, fret, kind, choice),
             _ => None,
         };
         match (recording, v.excitation) {
@@ -264,8 +264,9 @@ fn ring(v: &Voice, sound: &GuitarSound, out: &mut [f32], rng: &mut Pcg32) {
     }
 }
 
-/// A recorded note from the voice's start, at its level, damped at its end. A hammer-on or
-/// pull-off leaves out the pick's attack.
+/// A recorded note from the voice's start, at its level, damped at its end, its pitch following
+/// the voice's (the recording read faster to go up). A hammer-on or pull-off leaves out the
+/// pick's attack.
 fn play(v: &Voice, rec: &[f32], sound: &GuitarSound, out: &mut [f32]) {
     let sr = sound.sample_rate;
     let first = (v.start * sr).round().max(0.0) as usize;
@@ -276,12 +277,14 @@ fn play(v: &Voice, rec: &[f32], sound: &GuitarSound, out: &mut [f32]) {
     let damp_at = ((v.end - v.start).max(0.0) * sr) as usize;
     let damp = (-1.0 / (RELEASE * sr)).exp() as f32;
     let fade_in = if skip > 0 { (0.003 * sr) as usize } else { 0 };
+    let steady = v.glide.is_empty() && v.vibrato == 0.0;
     let mut env = 1.0f32;
-    for (k, &x) in rec.iter().skip(skip).enumerate() {
-        let j = first + k;
-        if j >= out.len() {
-            break;
-        }
+    let mut pos = skip as f64;
+    for (k, o) in out.iter_mut().skip(first).enumerate() {
+        let i = pos as usize;
+        let Some(&next) = rec.get(i + 1) else { break };
+        let frac = (pos - i as f64) as f32;
+        let x = rec[i] + (next - rec[i]) * frac;
         if k >= damp_at {
             env *= damp;
             if env < 1e-4 {
@@ -289,7 +292,8 @@ fn play(v: &Voice, rec: &[f32], sound: &GuitarSound, out: &mut [f32]) {
             }
         }
         let ramp = if k < fade_in { k as f32 / fade_in as f32 } else { 1.0 };
-        out[j] += x * level * env * ramp;
+        *o += x * level * env * ramp;
+        pos += if steady { 1.0 } else { 2f64.powf(offset(v, k as f64 / sr) / 12.0) };
     }
 }
 
@@ -350,6 +354,31 @@ mod tests {
         harmonic.excitation = Excitation::Harmonic { level: 1.0, n: 3 };
         let x = render(&[harmonic], 1.5, &GuitarSound { hum: 0.0, hiss: 0.0, ..GuitarSound::default() }, 3);
         assert!((pitch_at(&x, 0.4) - 59.0).abs() < 0.15, "7th-fret harmonic: an octave and a fifth up");
+    }
+
+    /// One recording, a steady A3, for every note asked.
+    struct OneNote(Vec<f32>);
+
+    impl Samples for OneNote {
+        fn note(&self, _: usize, _: i32, _: Kind, _: u32) -> Option<&[f32]> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn a_recorded_note_follows_a_bend_and_a_vibrato() {
+        let a3 = OneNote((0..96_000).map(|i| (TAU * 220.0 * i as f64 / 48_000.0).sin() as f32 * 0.5).collect());
+        let quiet = GuitarSound { hum: 0.0, hiss: 0.0, ..GuitarSound::default() };
+        let mut bend = Voice { recorded: Some((5, Kind::Plain, 0)), ..voice(57.0, 0.0, 1.0) };
+        bend.glide = vec![(0.08, 0.0), (0.2, 2.0)];
+        let x = render_with(&[bend], 1.0, &quiet, 2, Some(&a3));
+        assert!((pitch_at(&x, 0.02) - 57.0).abs() < 0.1, "picked at the fret");
+        assert!((pitch_at(&x, 0.5) - 59.0).abs() < 0.1, "a whole step up");
+        let wobbly = Voice { recorded: Some((5, Kind::Plain, 0)), vibrato: 0.3, ..voice(57.0, 0.0, 1.0) };
+        let x = render_with(&[wobbly], 1.0, &quiet, 2, Some(&a3));
+        let pitches: Vec<f64> = (0..20).map(|k| pitch_at(&x, 0.1 + 0.02 * k as f64)).collect();
+        let (lo, hi) = pitches.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
+        assert!(hi - lo > 0.4 && (lo + hi) / 2.0 - 57.0 < 0.1, "around A3, up and down: {lo:.2}..{hi:.2}");
     }
 
     #[test]

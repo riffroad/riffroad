@@ -4,6 +4,7 @@
 //! frame for the song time and the game events, and renders the note highway.
 
 mod cloud;
+mod compose;
 mod google;
 mod import;
 
@@ -492,6 +493,19 @@ async fn export_feedpak(app: State<'_, App>, importer: State<'_, Importer>, id: 
     let folder = chart.parent().ok_or("chemin de morceau invalide")?.to_path_buf();
     let importer = importer.inner().clone();
     tauri::async_runtime::spawn_blocking(move || importer.export_feedpak(&folder, Path::new(&path))).await.map_err(|e| e.to_string())?
+}
+
+/// A song Riffroad writes and records in `style` (rock, punk, blues, metal, ballad), put in the
+/// library: its id. A few seconds.
+#[tauri::command]
+async fn compose_song(app: State<'_, App>, style: String) -> Result<String, String> {
+    let style = opensmith_session::songwriter::Style::from_name(&style).ok_or_else(|| format!("style inconnu : {style}"))?;
+    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    let root = app.library.clone();
+    let library = root.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || compose::compose(&library, style, seed)).await.map_err(|e| e.to_string())??;
+    eprintln!("morceau composé : {}", path.display());
+    Ok(library_id(&root, &path))
 }
 
 /// Read off the main thread: imports land while a song is played.
@@ -1324,6 +1338,7 @@ pub fn run() {
             cloud_set_card,
             cloud_delete_account,
             library,
+            compose_song,
             load_song,
             load_lesson,
             add_sound,

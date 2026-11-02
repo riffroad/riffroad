@@ -13,6 +13,8 @@ pub mod guitarist;
 mod history;
 pub mod replay;
 pub mod samples;
+pub mod songwriter;
+pub mod studio;
 mod runner;
 mod session;
 mod take;

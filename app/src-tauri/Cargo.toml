@@ -31,6 +31,7 @@ tokio = { version = "1.54.1", features = ["sync"] }
 opensmith-cloud = { version = "0.1.0", path = "../../cloud/api" }
 sha2 = "0.10"
 base64 = "0.22"
+vorbis_rs = { version = "0.5.5", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

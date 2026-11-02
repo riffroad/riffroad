@@ -12,6 +12,7 @@ opensmith-dsp.workspace = true
 opensmith-game.workspace = true
 hound.workspace = true
 lewton.workspace = true
+realfft.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
