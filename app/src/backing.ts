@@ -14,8 +14,9 @@ export interface Backing {
   bass: [number, number, number][];
 }
 
-/** `pulse`: a slow, light beat for the first steps; `rock`: straight eighths, kick and snare. */
-export type BackingStyle = 'pulse' | 'rock';
+/** `pulse`: a slow, light beat for the first steps; `rock`: straight eighths, kick and snare;
+ * `ballad`: half time, room for open chords; `shuffle`: swung eighths, a blues. */
+export type BackingStyle = 'pulse' | 'rock' | 'ballad' | 'shuffle';
 
 const NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'];
 
@@ -58,6 +59,19 @@ export function backingFor(lesson: Lesson, pace: number, style: BackingStyle, ro
       if (pos === 0) drums.push([t, 'kick']);
       if (pos === 2) drums.push([t, 'snare']);
       if (pos === 0 || pos === 2) bass.push([t, bassNote(root), 1.8 * spb]);
+    } else if (style === 'ballad') {
+      if (pos % 1 === 0) drums.push([t, 'hat']);
+      if (pos === 0 || pos === 2.5) drums.push([t, 'kick']);
+      if (pos === 2) drums.push([t, 'snare']);
+      if (pos === 0 || pos === 2) bass.push([t, bassNote(root), 1.8 * spb]);
+    } else if (style === 'shuffle') {
+      // The off-beat eighth swung to the last third of the beat.
+      const swung = pos % 1 === 0 ? t : at(beat + 1 / 6);
+      drums.push([swung, 'hat']);
+      if (pos === 0 || pos === 2) drums.push([t, 'kick']);
+      if (pos === 1 || pos === 3) drums.push([t, 'snare']);
+      // Root and fifth, a walking blues bass.
+      bass.push([swung, bassNote(root) + (pos % 2 >= 1 ? 7 : 0), (pos % 1 === 0 ? 0.6 : 0.3) * spb]);
     } else {
       drums.push([t, 'hat']);
       if (pos === 0 || pos === 2 || pos === 2.5) drums.push([t, 'kick']);

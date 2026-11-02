@@ -10,7 +10,8 @@ describe('the learning path', () => {
   const all = chapters();
 
   it('teaches each notion in three exercises that ask a little more', () => {
-    expect(all.map((c) => c.id)).toEqual(['basics', 'power', 'open']);
+    expect(all.map((c) => c.id)).toEqual(['basics', 'power', 'open', 'rhythm', 'left-hand']);
+    expect(all.flatMap((c) => c.notions).length).toBe(27);
     for (const n of all.flatMap((c) => c.notions)) {
       const [step, time, band] = n.exercises;
       expect([step.kind, time.kind, band.kind]).toEqual(['step', 'time', 'band']);
@@ -58,6 +59,25 @@ describe('the learning path', () => {
     expect(focusScore(items, chart, 'palmMute')).toEqual({ hits: 1, judged: 2 });
     expect(focusScore(items, chart, 'all')).toEqual({ hits: 1, judged: 3 });
     expect(focusScore([...items, item(1, 'pending')], chart, 'all').judged).toBe(3);
+    // A technique of the left hand: its notes only (a slide by its target fret).
+    const legato = {
+      notes: [
+        { time: 1, string: 3, fret: 0, sustain: 0, levels: [0, 0] },
+        { time: 2, string: 3, fret: 2, sustain: 0, levels: [0, 0], techniques: { hammerOn: true } },
+        { time: 3, string: 3, fret: 2, sustain: 1, levels: [0, 0], techniques: { slideTo: 4 } },
+      ],
+      chords: [],
+    } as unknown as Pick<Chart, 'notes' | 'chords'>;
+    expect(focusScore(items, legato, 'hammerOn')).toEqual({ hits: 0, judged: 1 });
+    expect(focusScore(items, legato, 'slide')).toEqual({ hits: 0, judged: 1 });
+  });
+
+  it('judges each notion of chapters 3 to 5 on notes the exercises have', () => {
+    for (const n of all.slice(2).flatMap((c) => c.notions)) {
+      const chart = { notes: n.exercises[0].lesson.steps.filter((s) => !('chord' in s)), chords: n.exercises[0].lesson.steps.filter((s) => 'chord' in s) };
+      const has = n.focus === 'all' || (n.focus === 'chords' ? chart.chords.length > 0 : chart.notes.some((x) => 'techniques' in x && x.techniques && (n.focus === 'slide' ? x.techniques.slideTo !== undefined : x.techniques[n.focus as 'bend'])));
+      expect(has, n.id).toBe(true);
+    }
   });
 });
 
@@ -74,6 +94,17 @@ describe('the backing band', () => {
     // Half the tempo: twice the seconds (the first snare, on beat 2 after the count-in).
     const slow = backingFor(lesson([{ beat: 0, chord: 'E5', hold: 4 }]), 0.5, 'rock');
     expect(slow.drums.find(([, d]) => d === 'snare')![0]).toBeCloseTo(2 * (LEAD + 1));
+  });
+
+  it('swings the shuffle and lays the ballad in half time', () => {
+    const one = lesson([{ beat: 0, string: 0, fret: 0, hold: 4 }]);
+    const shuffle = backingFor(one, 1, 'shuffle');
+    // The off-beat hat two thirds of the way through the beat, the bass on root and fifth.
+    expect(shuffle.drums.filter(([, d]) => d === 'hat').map(([t]) => +(t - LEAD).toFixed(3))).toEqual([0, 0.667, 1, 1.667, 2, 2.667, 3, 3.667]);
+    expect([...new Set(shuffle.bass.map(([, m]) => m))]).toEqual([28, 35]);
+    const ballad = backingFor(one, 1, 'ballad');
+    expect(ballad.drums.filter(([, d]) => d === 'snare').map(([t]) => t - LEAD)).toEqual([2]);
+    expect(ballad.drums.filter(([, d]) => d === 'hat')).toHaveLength(4);
   });
 
   it('follows the chords strummed, else the roots given', () => {
