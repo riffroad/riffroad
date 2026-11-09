@@ -28,7 +28,7 @@ fn sequence(notes: &[(i32, f32, f32)], kind: Kind, seed: u64) -> (Vec<f32>, Vec<
 }
 
 /// Exact note sequence; attack timestamps within 1 ms (2 ms when the note has to emerge from
-/// the previous note's tail); confirmation within physics + settle + 2 buffers.
+/// the previous note's tail); confirmation within physics + settle + the agreement buffers.
 fn check_sequence(cfg: TrackerConfig, signal: &[f32], truth: &[(usize, i32)], label: &str) {
     let ons = note_ons(&run_tracker(&mut NoteTracker::new(cfg), signal));
     let got: Vec<i32> = ons.iter().map(|o| o.midi).collect();
@@ -43,7 +43,7 @@ fn check_sequence(cfg: TrackerConfig, signal: &[f32], truth: &[(usize, i32)], la
         // A note that interrupts another one waits `settle_ms` before its pitch window opens.
         let settle = if k > 0 { (cfg.settle_ms * 1e-3 * SR) as u64 } else { 0 };
         assert!(
-            on.sample - at as u64 <= physics + settle + 2 * BLOCK as u64,
+            on.sample - at as u64 <= physics + settle + (cfg.confirm.max(1) + 1) as u64 * BLOCK as u64,
             "{label} {}: confirmed after {:.2} ms",
             note::note_name(midi),
             ms(on.sample - at as u64)
@@ -95,7 +95,7 @@ fn yin_tracker_follows_the_same_lines() {
         let bound = 2.0 * (SR / midi_freq(midi) + 3.0)
             + PitchConfig::default().min_overlap_samples as f32
             + cfg.settle_ms * 1e-3 * SR;
-        assert!(((on.sample - at as u64) as f32) <= bound + 2.0 * BLOCK as f32, "YIN {midi}");
+        assert!(((on.sample - at as u64) as f32) <= bound + (cfg.confirm.max(1) + 1) as f32 * BLOCK as f32, "YIN {midi}");
     }
 }
 

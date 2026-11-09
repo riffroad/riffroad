@@ -55,6 +55,7 @@ fn main() {
             (&mut total.high, r.high),
             (&mut total.low, r.low),
             (&mut total.wrong_chord, r.wrong_chord),
+            (&mut total.technique, r.technique),
         ] {
             *a += b;
         }

@@ -1,5 +1,5 @@
 //! What is judged when a note has no pitch to check (dead notes, muted strums, pinch
-//! harmonics), what a natural harmonic sounds, and a guitar a little out of tune or an octave off.
+//! harmonics), what a natural harmonic sounds, and a guitar a little out of tune.
 
 use opensmith_game::{Chart, Game, GameConfig, Judgement, MissReason, Status};
 
@@ -100,15 +100,45 @@ fn a_guitar_going_out_of_tune_is_still_judged_right() {
 }
 
 #[test]
-fn an_octave_off_counts_but_the_note_itself_comes_first() {
+fn wrong_notes_and_octaves_are_refused() {
     let g2 = r#""string":0,"fret":3"#;
-    let mut g = game(&[g2, g2], &[]);
-    assert_eq!(hits(g.on_note(1.0, 55)), 1, "G3 for G2: the tracker or the pickup slipped an octave");
-    assert_eq!(hits(g.on_note(2.0, 31)), 1, "G1 too");
+    for shift in -24..=24 {
+        let mut g = game(&[g2], &[]);
+        assert_eq!(hits(g.on_note(1.0, 43 + shift)), usize::from(shift == 0), "pitch shifted {shift} semitones");
+        g.advance(3.0);
+        assert_eq!(g.score().misses, u32::from(shift != 0));
+    }
     // G2 then G3, 80 ms apart: G3 heard right after G2 plays G3, not the nearer G2.
     let g3 = r#""string":0,"fret":15"#;
     let mut g = game_every(0.08, &[g2, g3], &[]);
     assert!(matches!(g.on_note(1.03, 55), Some(Judgement::Hit { index: 1, .. })));
+}
+
+#[test]
+fn the_same_attack_cannot_be_scored_again_by_another_detector() {
+    let e3 = r#""string":2,"fret":2"#;
+    let mut g = game_every(0.08, &[e3, e3], &[]);
+    assert_eq!(hits(g.on_note(1.0, 52)), 1);
+    assert_eq!(hits(g.on_note(1.0, 52)), 0, "a repeated pitch report is still the same attack");
+    assert_eq!(hits(g.on_note_heard(1, true, Some(1.0))), 0, "the neural detector cannot reuse the tracker's attack");
+    g.advance(3.0);
+    assert_eq!((g.score().hits, g.score().misses), (1, 1));
+
+    let mut g = game_every(0.08, &[e3, e3], &[]);
+    assert_eq!(hits(g.on_note_heard(0, true, Some(1.0))), 1);
+    assert_eq!(hits(g.on_note(1.0, 52)), 0, "the tracker cannot reuse the neural detector's attack either");
+    assert_eq!(hits(g.on_note(1.08, 52)), 1, "a real second attack still counts");
+}
+
+#[test]
+fn attack_claims_allow_for_latency_and_are_cleared_on_restart() {
+    let e3 = r#""string":2,"fret":2"#;
+    let mut g = game_every(0.08, &[e3, e3], &[]);
+    g.set_input_offset(0.05);
+    assert_eq!(hits(g.on_note(1.05, 52)), 1);
+    assert_eq!(hits(g.on_note_heard(1, true, Some(1.051))), 0, "detectors may date the same compensated attack slightly differently");
+    g.restart_at(0.0);
+    assert_eq!(hits(g.on_note(1.05, 52)), 1, "a retry starts a new performance");
 }
 
 #[test]
@@ -129,4 +159,12 @@ fn a_strum_may_brush_the_open_strings_next_to_its_chord() {
     assert_eq!(chart.brushable(0), vec![40, 59]);
     assert!(chart.brushable(1).is_empty());
     assert_eq!(chart.brushable(2), vec![45]);
+}
+
+#[test]
+fn the_strings_of_one_strum_cannot_score_another_chord() {
+    let mut g = game_every(0.08, &[], &["", ""]);
+    assert_eq!(hits(g.on_chord(0, true, Some(1.0))), 1);
+    assert_eq!(hits(g.on_chord(1, true, Some(1.025))), 0, "a later string in the same strum");
+    assert_eq!(hits(g.on_chord(1, true, Some(1.08))), 1, "a new strum still counts");
 }

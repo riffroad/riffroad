@@ -33,6 +33,11 @@ impl AudioBackend for EngineBackend {
     fn info(&self) -> Option<StreamInfo> {
         Some(self.0.info().clone())
     }
+    fn failure(&mut self) -> Option<String> {
+        // An xrun is transient. Device changes, invalidation and backend failures require
+        // reopening streams; errors are published by callbacks without locking them.
+        self.0.monitor().stream_failed().then(|| "Le flux audio a été interrompu ; reconnexion…".into())
+    }
 }
 
 pub enum Command {
@@ -72,6 +77,8 @@ pub enum Command {
     /// Listen to this input device (name fragment; `None`: the USB guitar cable, else the Mac's
     /// default input). Like an output change, the song in progress stops.
     Input(Option<String>),
+    InputChannel(usize),
+    Monitoring(Option<bool>),
     /// Demo mode: the game plays every note itself.
     Autopilot(bool),
     /// Records what the guitar plays during songs into takes under this folder (`None`: stop).
@@ -93,6 +100,8 @@ pub enum Command {
 pub struct Devices {
     pub input: Option<String>,
     pub output: Option<String>,
+    pub input_channel: usize,
+    pub monitor: Option<bool>,
 }
 
 /// What the UI gets at each frame.
@@ -200,68 +209,73 @@ where
     F: FnMut(Devices) -> Result<B, String>,
 {
     let mut devices = Devices::default();
-    let backend = match make(devices.clone()) {
-        Ok(b) => b,
-        Err(e) => {
-            outbox.lock().unwrap().error = Some(e);
-            return;
-        }
-    };
-    outbox.lock().unwrap().info = backend.info();
-    let mut session = Session::new(backend, cfg);
+    let mut wanted = devices.clone();
+    let mut session: Option<Session<B>> = None;
+    let mut healthy = false;
+    let mut pending = std::collections::VecDeque::new();
+    let mut retry_at = Instant::now();
     let mut last_stats = Instant::now();
     while !stop.load(Relaxed) {
+        let mut changed = false;
         loop {
             match rx.try_recv() {
-                Ok(Command::Load { chart, track, start, levels }) => {
-                    session.load(*chart, track, start);
-                    session.set_levels(levels);
-                }
-                Ok(Command::Play) => session.play(),
-                Ok(Command::Pause) => session.pause(),
-                Ok(Command::Seek(t)) => session.seek(t),
-                Ok(Command::Volume(g)) => session.set_volume(g),
-                Ok(Command::StemVolume(g)) => session.set_stem_volume(g),
-                Ok(Command::StartLevel(l)) => session.set_start_level(l),
-                Ok(Command::Dynamic(on)) => session.set_dynamic(on),
-                Ok(Command::Difficulty { dynamic, level }) => session.set_difficulty(dynamic, level),
-                Ok(Command::Tuner(on)) => session.set_tuner(on),
-                Ok(Command::Calibrate) => session.calibrate(CalibrationPlan::default()),
-                Ok(Command::InputOffset(s)) => session.set_input_offset(s),
-                Ok(Command::InputGain(g)) => session.set_input_gain(g),
-                Ok(Command::Amp(params)) => session.set_chain(params),
-                Ok(cmd @ (Command::Output(_) | Command::Input(_))) => {
-                    let wanted = match cmd {
-                        Command::Output(name) => Devices { output: name, ..devices.clone() },
-                        Command::Input(name) => Devices { input: name, ..devices.clone() },
-                        _ => unreachable!(),
-                    };
-                    match make(wanted.clone()) {
-                        Ok(backend) => {
-                            devices = wanted;
-                            let info = backend.info();
-                            drop(session.replace_backend(backend));
-                            let mut o = outbox.lock().unwrap();
-                            o.info = info;
-                            o.switch_error = None;
-                        }
-                        Err(e) => outbox.lock().unwrap().switch_error = Some(e),
+                Ok(cmd) => {
+                    let before = wanted.clone();
+                    match cmd {
+                        Command::Output(name) => { wanted.output = name; changed = true; },
+                        Command::Input(name) => { wanted.input = name; wanted.input_channel = 0; changed = true; }
+                        Command::InputChannel(channel) => wanted.input_channel = channel,
+                        Command::Monitoring(monitor) => wanted.monitor = monitor,
+                        other => pending.push_back(other),
                     }
+                    changed |= before != wanted;
                 }
-                Ok(Command::Autopilot(on)) => session.set_autopilot(on),
-                Ok(Command::Record(base)) => session.record(base),
-                Ok(Command::MonitorGain(g)) => session.set_monitor_gain(g),
-                Ok(Command::Rate(r)) => session.set_rate(r),
-                Ok(Command::Riff(riff)) => session.set_riff(riff),
-                Ok(Command::AddSound { name, rate, samples }) => session.add_sound(name, rate, samples),
-                Ok(Command::Sound { name, gain, at }) => session.play_sound(&name, gain, at),
-                Ok(Command::Bed { name, gain }) => session.set_bed(name, gain),
-                Ok(Command::Judging(j)) => session.set_judging(j),
-                Ok(Command::Wait(on)) => session.set_wait(on),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
         }
+        if let Some(s) = session.as_mut().filter(|_| healthy) {
+            if let Some(error) = s.backend().failure() {
+                healthy = false;
+                let mut o = outbox.lock().unwrap();
+                o.error = Some(error);
+                o.info = None;
+                o.playing = false;
+                o.stats = None;
+                retry_at = Instant::now();
+            }
+        }
+        if changed || (!healthy && Instant::now() >= retry_at) {
+            match make(wanted.clone()) {
+                Ok(backend) => {
+                    let info = backend.info();
+                    if let Some(s) = session.as_mut() { drop(s.replace_backend(backend)); }
+                    else { session = Some(Session::new(backend, cfg)); }
+                    devices = wanted.clone();
+                    healthy = true;
+                    let mut o = outbox.lock().unwrap();
+                    o.info = info;
+                    o.error = None;
+                    o.switch_error = None;
+                    o.stats = None;
+                }
+                Err(error) => {
+                    let mut o = outbox.lock().unwrap();
+                    if healthy { o.switch_error = Some(error); wanted = devices.clone(); }
+                    else { o.error = Some(error); o.info = None; o.playing = false; }
+                    retry_at = Instant::now() + Duration::from_millis(500);
+                }
+            }
+        }
+        if !healthy {
+            // Keep preferences/load requests while an interface is absent, without spinning
+            // on CoreAudio or losing the command receiver after the first failure.
+            if pending.len() > MAX_EVENTS { pending.drain(..pending.len() - MAX_EVENTS); }
+            thread::sleep(PERIOD);
+            continue;
+        }
+        let session = session.as_mut().unwrap();
+        for command in pending.drain(..) { apply(session, command); }
         session.update();
         let peak = session.take_peak();
         let events = session.take_events();
@@ -280,10 +294,38 @@ where
             o.events.drain(..excess);
             o.peak = o.peak.max(peak);
             (o.time, o.at_ns, o.playing, o.rate) = (time, at_ns, playing, rate);
-            if stats.is_some() {
-                o.stats = stats;
-            }
+            if stats.is_some() { o.stats = stats; }
         }
         thread::sleep(PERIOD);
+    }
+}
+
+fn apply<B: AudioBackend>(session: &mut Session<B>, command: Command) {
+    match command {
+        Command::Load { chart, track, start, levels } => { session.load(*chart, track, start); session.set_levels(levels); }
+        Command::Play => session.play(),
+        Command::Pause => session.pause(),
+        Command::Seek(t) => session.seek(t),
+        Command::Volume(g) => session.set_volume(g),
+        Command::StemVolume(g) => session.set_stem_volume(g),
+        Command::StartLevel(l) => session.set_start_level(l),
+        Command::Dynamic(on) => session.set_dynamic(on),
+        Command::Difficulty { dynamic, level } => session.set_difficulty(dynamic, level),
+        Command::Tuner(on) => session.set_tuner(on),
+        Command::Calibrate => session.calibrate(CalibrationPlan::default()),
+        Command::InputOffset(s) => session.set_input_offset(s),
+        Command::InputGain(g) => session.set_input_gain(g),
+        Command::Amp(params) => session.set_chain(params),
+        Command::Autopilot(on) => session.set_autopilot(on),
+        Command::Record(base) => session.record(base),
+        Command::MonitorGain(g) => session.set_monitor_gain(g),
+        Command::Rate(r) => session.set_rate(r),
+        Command::Riff(riff) => session.set_riff(riff),
+        Command::AddSound { name, rate, samples } => session.add_sound(name, rate, samples),
+        Command::Sound { name, gain, at } => session.play_sound(&name, gain, at),
+        Command::Bed { name, gain } => session.set_bed(name, gain),
+        Command::Judging(j) => session.set_judging(j),
+        Command::Wait(on) => session.set_wait(on),
+        Command::Input(_) | Command::Output(_) | Command::InputChannel(_) | Command::Monitoring(_) => unreachable!(),
     }
 }

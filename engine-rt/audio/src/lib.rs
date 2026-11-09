@@ -24,6 +24,8 @@ pub enum AudioError {
     NoInput,
     #[error("no audio output device available")]
     NoOutput,
+    #[error("input channel {channel} is unavailable (device has {channels} channels)")]
+    InputChannel { channel: usize, channels: usize },
     #[error("no {direction} device matching \"{pattern}\"")]
     NotFound { direction: &'static str, pattern: String },
     #[error("{context}: {source}")]

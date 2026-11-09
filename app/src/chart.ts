@@ -105,13 +105,51 @@ export interface Chart {
 export const DEFAULT_ANCHOR: Anchor = { time: 0, fret: 1, width: 4 };
 
 /**
- * Checks the header only. Event order is kept as is: the game engine refers to notes, chords
+ * Validates before rendering. Event order is kept as is: the game engine refers to notes, chords
  * and phrases by index, so the renderer must see the same arrays.
  */
 export function parseChart(json: unknown): Chart {
   const c = json as Chart;
   if (!c || c.format !== 'opensmith-chart') throw new Error(t('ce fichier n\'est pas un chart Riffroad'));
   if (c.version !== 1) throw new Error(t('version de chart non gérée : {version}', { version: c.version }));
+  const require = (ok: boolean, why: string): void => {
+    if (!ok) throw new Error(`Partition invalide : ${why}`);
+  };
+  const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+  const integer = (n: unknown, min: number, max: number) => finite(n) && Number.isInteger(n) && n >= min && n <= max;
+  require(!!c.meta && finite(c.meta.duration) && c.meta.duration > 0, 'durée');
+  require(!!c.arrangement?.tuning && Array.isArray(c.arrangement.tuning.strings), 'accordage');
+  const strings = c.arrangement.tuning.strings;
+  require(strings.length >= 4 && strings.length <= 6, 'seuls les arrangements de 4 à 6 cordes sont pris en charge');
+  require(strings.every((m) => integer(m, 0, 127)) && finite(c.arrangement.tuning.cents ?? 0), 'accordage');
+  require(integer(c.arrangement.maxDifficulty, 0, 1000), 'difficulté');
+  require(!!c.audio && finite(c.audio.offset), 'décalage audio');
+  require(!!c.tempo && finite(c.tempo.bpm) && c.tempo.bpm > 0 && Array.isArray(c.tempo.timeSignature)
+    && c.tempo.timeSignature.length === 2 && c.tempo.timeSignature.every((n) => integer(n, 1, 128)), 'tempo');
+  const time = (n: unknown): n is number => finite(n) && n >= 0 && n <= c.meta.duration + 1e-6;
+  const span = (s: { start: number; end: number }) => !!s && time(s.start) && time(s.end) && s.start < s.end;
+  for (const name of ['notes', 'chords', 'beats', 'anchors', 'sections', 'phrases', 'chordTemplates', 'handShapes'] as const) {
+    require(Array.isArray(c[name]), name);
+  }
+  for (const events of [c.notes, c.chords, c.beats, c.anchors]) {
+    require(events.every((e, i) => !!e && time(e.time) && (i === 0 || events[i - 1].time <= e.time)), 'événements hors ordre ou hors morceau');
+  }
+  require(c.phrases.every((p, i) => span(p) && integer(p.maxDifficulty, 0, c.arrangement.maxDifficulty)
+    && (i === 0 || c.phrases[i - 1].end <= p.start + 1e-6)), 'phrases');
+  require(c.sections.every((s, i) => span(s) && (i === 0 || c.sections[i - 1].start <= s.start)), 'sections');
+  require(c.chordTemplates.every((v) => !!v && Array.isArray(v.frets) && Array.isArray(v.fingers)
+    && v.frets.length === strings.length && v.fingers.length === strings.length
+    && v.frets.every((f) => integer(f, -1, 36)) && v.frets.some((f) => f >= 0)
+    && v.fingers.every((f) => integer(f, -1, 4))), 'positions des accords');
+  const template = (n: unknown) => integer(n, 0, c.chordTemplates.length - 1);
+  require(c.chords.every((v) => template(v.template)) && c.handShapes.every((v) => span(v) && template(v.template)), 'référence d’accord');
+  require(c.anchors.every((a) => integer(a.fret, 0, 36) && integer(a.width, 1, 255)), 'positions de main');
+  require(c.notes.every((n) => integer(n.string, 0, strings.length - 1) && integer(n.fret, 0, 36)
+    && (n.techniques?.slideTo === undefined || integer(n.techniques.slideTo, 0, 36))
+    && (n.techniques?.bend === undefined || (finite(n.techniques.bend) && n.techniques.bend >= 0 && n.techniques.bend <= 12))), 'note ou technique');
+  require([...c.notes, ...c.chords].every((e) => finite(e.sustain) && e.sustain >= 0 && Array.isArray(e.levels) && e.levels.length === 2
+    && integer(e.levels[0], 0, c.arrangement.maxDifficulty) && integer(e.levels[1], e.levels[0], c.arrangement.maxDifficulty)
+    && c.phrases.some((p) => p.start <= e.time && e.time < p.end)), 'tenue, difficulté ou événement hors phrase');
   return c;
 }
 

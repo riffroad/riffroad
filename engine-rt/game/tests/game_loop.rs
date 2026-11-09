@@ -60,6 +60,7 @@ fn play(game: &mut Game, audio: &[f32]) -> Vec<Judgement> {
         tracker.process(block, |e| match e {
             TrackerEvent::Onset { sample } => attacks.push(sample as f64 / SR as f64),
             TrackerEvent::NoteOn { onset_sample, midi, .. } => judgements.extend(game.on_note(onset_sample as f64 / SR as f64, midi)),
+            TrackerEvent::Pitch { sample, midi_f, .. } => game.observe_pitch(sample as f64 / SR as f64, midi_f as f64),
             _ => {}
         });
         for (index, time, pitches) in game.chords_ready(now, CHORD_WINDOW) {
@@ -73,6 +74,8 @@ fn play(game: &mut Game, audio: &[f32]) -> Vec<Judgement> {
                 .min_by(|x, y| (x - time).abs().total_cmp(&(y - time).abs()));
             judgements.extend(game.on_chord(index, accepted, attack));
         }
+        let db = 10.0 * (block.iter().map(|v| v * v).sum::<f32>() / block.len() as f32).max(1e-12).log10();
+        game.observe_level(now, db);
         judgements.extend(game.advance(now));
     }
     judgements.extend(game.advance(audio.len() as f64 / SR as f64 + 1.0));
@@ -145,6 +148,7 @@ fn dynamic_difficulty_climbs_for_a_good_player() {
     let mut probe = Game::new(chart.clone(), GameConfig::default());
     let mut now = 0.0;
     while now <= chart.meta.duration + 1.0 {
+        probe.autoplay(now);
         probe.advance(now);
         let due: Vec<(usize, f64, Target)> = probe
             .expected()

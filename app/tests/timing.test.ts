@@ -26,9 +26,10 @@ describe('missed notes by reason', () => {
       { kind: 'pitch', semitones: 2 },
       { kind: 'pitch', semitones: -12 },
       { kind: 'wrongChord' },
+      { kind: 'technique' },
       { kind: 'unplayed' },
       undefined,
     ]);
-    expect(n).toEqual({ early: 1, late: 2, high: 1, low: 1, chord: 1, unplayed: 2 });
+    expect(n).toEqual({ early: 1, late: 2, high: 1, low: 1, chord: 1, technique: 1, unplayed: 2 });
   });
 });

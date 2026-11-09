@@ -25,6 +25,7 @@ export interface OutputDevice {
 
 /** An input device of the Mac (the USB guitar cable, an interface, a microphone). */
 export interface InputDevice {
+  channels: number;
   name: string;
   current: boolean;
   rocksmith: boolean;
@@ -32,6 +33,8 @@ export interface InputDevice {
 
 /** Guitar settings the engine applies (app/src-tauri InputSettings). */
 export interface InputSettings {
+  inputChannel: number;
+  monitor: boolean | null;
   inputGainDb: number;
   inputOffsetMs: number;
   /** Linear gains. */
@@ -42,6 +45,8 @@ export interface InputSettings {
 }
 
 export interface AudioStatus {
+  inputChannel: number;
+  inputChannels: number;
   ready: boolean;
   error: string | null;
   input: string | null;

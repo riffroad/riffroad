@@ -63,9 +63,10 @@ fn open_strings_latency_table() {
             for (k, offset) in [0usize, 17, 40, 63].into_iter().enumerate() {
                 let m = measure(cfg, kind, midi, offset, 100 + k as u64).unwrap_or_else(|e| panic!("{e}"));
                 worst = (worst.0.max(m.timing_ms), worst.1.max(m.confirm_ms), m.physics_ms);
-                // Within two buffers of the physical limit.
+                // The first estimate within two buffers of the physical limit, followed by
+                // the configured consecutive agreeing estimates. Attack timing stays exact.
                 assert!(
-                    m.confirm_ms <= m.physics_ms + 2.0 * ms(BLOCK as u64),
+                    m.confirm_ms <= m.physics_ms + (cfg.confirm.max(1) + 1) as f32 * ms(BLOCK as u64),
                     "{label} {kind:?}: confirmed after {:.2} ms, physics allows {:.2} ms",
                     m.confirm_ms,
                     m.physics_ms
@@ -77,8 +78,8 @@ fn open_strings_latency_table() {
 }
 
 /// Every string × fret, plucked and Karplus–Strong, 4 buffer alignments: 1200 notes.
-/// 100 % precision, attack timestamp < 1 ms, confirmation < 10 ms wherever the physics allows
-/// it (period short enough that the evidence window plus one buffer fits in 10 ms).
+/// 100 % precision, attack timestamp < 1 ms, first estimate < 10 ms wherever physics allows
+/// (the evidence window plus one buffer fits), plus the configured agreement time.
 #[test]
 fn whole_fretboard_precision_and_latency() {
     let cfg = TrackerConfig::default();
@@ -95,13 +96,17 @@ fn whole_fretboard_precision_and_latency() {
                     let seed = (string * 10_000 + fret as usize * 100 + k * 10) as u64 + kind as u64;
                     match measure(cfg, kind, midi, offset, seed) {
                         Ok(m) => {
+                            if m.confirm_ms > 30.0 {
+                                failures.push(format!("{} {kind:?}+{offset}: stable pitch took {:.2} ms (> 30 ms)", note::note_name(midi), m.confirm_ms));
+                            }
                             if m.timing_ms > 1.0 {
                                 failures.push(format!("{} timing {:.2} ms", note::note_name(midi), m.timing_ms));
                             }
                             let feasible = m.physics_ms + ms(BLOCK as u64) <= budget_ms;
-                            if feasible && m.confirm_ms >= budget_ms {
+                            let agreement_ms = cfg.confirm.saturating_sub(1) as f32 * ms(BLOCK as u64);
+                            if feasible && m.confirm_ms >= budget_ms + agreement_ms {
                                 failures.push(format!(
-                                    "{} {kind:?}+{offset}: confirmed after {:.2} ms (> {budget_ms} ms)",
+                                    "{} {kind:?}+{offset}: confirmed after {:.2} ms (> {budget_ms} ms + {agreement_ms:.2} ms agreement)",
                                     note::note_name(midi),
                                     m.confirm_ms
                                 ));

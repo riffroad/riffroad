@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { engineSettings, suggestGainDb } from '../src/guitar-settings';
+import { DEFAULT_GUITAR, engineSettings, suggestGainDb } from '../src/guitar-settings';
 import { advice, centsOff, foldOctave, meterPosition, pickString } from '../src/tuner';
 
 const DROP_C = [36, 43, 48, 53, 57, 62];
@@ -61,11 +61,18 @@ describe('guitar settings', () => {
   });
 
   it('sends perceptual volumes as gains, the master on all', () => {
-    const v = { inputGainDb: 2, inputOffsetMs: 25, visualOffsetMs: 0, masterVolume: 1, backingVolume: 0.5, monitorVolume: 1, stemVolume: 0, effectsVolume: 0.7, crowdVolume: 0.8 };
-    expect(engineSettings(v)).toEqual({ inputGainDb: 2, inputOffsetMs: 25, backingVolume: 0.25, monitorVolume: 1, stemVolume: 0 });
-    const half = engineSettings({ ...v, inputGainDb: 0, inputOffsetMs: 0, masterVolume: 0.5, backingVolume: 1, monitorVolume: 0.8, stemVolume: 0.6 });
+    const v = { ...DEFAULT_GUITAR, inputGainDb: 2, inputOffsetMs: 25, visualOffsetMs: 0, masterVolume: 1, backingVolume: 0.5, monitorVolume: 1, stemVolume: 0, effectsVolume: 0.7, crowdVolume: 0.8 };
+    expect(engineSettings(v)).toEqual({ inputChannel: 0, monitor: null, inputGainDb: 2, inputOffsetMs: 25, backingVolume: 0.25, monitorVolume: 1, stemVolume: 0 });
+    const half = engineSettings({ ...DEFAULT_GUITAR, ...v, inputGainDb: 0, inputOffsetMs: 0, masterVolume: 0.5, backingVolume: 1, monitorVolume: 0.8, stemVolume: 0.6 });
     expect(half.backingVolume).toBeCloseTo(0.25);
     expect(half.monitorVolume).toBeCloseTo(0.16);
     expect(half.stemVolume).toBeCloseTo(0.09);
   });
+});
+
+
+it('maps the selected channel and explicit monitoring to the native engine', () => {
+  expect(engineSettings({ ...DEFAULT_GUITAR, inputChannel: 1, monitoring: 1 })).toMatchObject({ inputChannel: 1, monitor: true });
+  expect(engineSettings({ ...DEFAULT_GUITAR, monitoring: 0 }).monitor).toBe(false);
+  expect(engineSettings(DEFAULT_GUITAR).monitor).toBeNull();
 });

@@ -18,6 +18,7 @@ export interface Effect {
 
 /** What to tell the player about a miss; nothing when nothing was played. */
 export function missText(reason: MissReason | undefined): string | null {
+  if (reason?.kind === 'technique') return t('Technique non réalisée');
   switch (reason?.kind) {
     case 'timing':
       return reason.error < 0 ? t('Trop tôt') : t('Trop tard');

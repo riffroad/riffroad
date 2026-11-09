@@ -1,5 +1,15 @@
 /** English for screens (see ../../i18n.ts). */
 export const SCREENS: Record<string, string> = {
+  'Technique non réalisée': 'Technique not performed',
+  '{n} technique non réalisée': '{n} technique not performed',
+  '{n} techniques non réalisées': '{n} techniques not performed',
+  'Canal d’entrée': 'Input channel',
+  'Retour de la guitare': 'Guitar monitoring',
+  'Automatique': 'Automatic',
+  'Coupé': 'Off',
+  'Activé (casque ou interface)': 'On (headphones or interface)',
+  'Le retour est coupé. Active-le pour entendre ta guitare via ton interface ; utilise un casque avec une entrée micro.': 'Monitoring is off. Enable it to hear your guitar through your interface; use headphones with a microphone input.',
+
   // Shared by several screens
   '{n} %': '{n}%',
   'Annuler': 'Cancel',

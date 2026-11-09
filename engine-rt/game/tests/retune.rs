@@ -10,7 +10,7 @@ fn chart(name: &str, strings: [i32; 6], cents: f64) -> Chart {
         "audio":{{"backing":null,"guitar":null,"mix":null,"offset":0.0}},
         "arrangement":{{"name":"Lead","type":"lead","tuning":{{"name":"{name}","strings":{strings:?},"cents":{cents}}},"capo":0,"maxDifficulty":0}},
         "tempo":{{"bpm":120.0,"timeSignature":[4,4]}},
-        "beats":[{{"time":0.0,"bar":1}}],"sections":[],"phrases":[],"chordTemplates":[],
+        "beats":[{{"time":0.0,"bar":1}}],"sections":[],"phrases":[{{"name":"A","start":0.0,"end":8.0,"maxDifficulty":0}}],"chordTemplates":[],
         "notes":[{{"time":1.0,"string":0,"fret":3,"sustain":0.0,"levels":[0,0]}}],"chords":[],"anchors":[],"handShapes":[]}}"#
     );
     Chart::from_json(&json).unwrap()

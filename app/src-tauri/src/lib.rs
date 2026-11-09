@@ -115,6 +115,10 @@ struct GuitarTuning {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InputSettings {
+    #[serde(default)]
+    input_channel: usize,
+    #[serde(default)]
+    monitor: Option<bool>,
     input_gain_db: f32,
     input_offset_ms: f64,
     /// Linear gains.
@@ -128,6 +132,8 @@ struct InputSettings {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AudioStatus {
+    input_channel: usize,
+    input_channels: u16,
     ready: bool,
     error: Option<String>,
     input: Option<String>,
@@ -1043,6 +1049,8 @@ fn poll(app: State<'_, App>) -> PollView {
 
 #[tauri::command]
 fn configure_input(app: State<'_, App>, settings: InputSettings) {
+    app.session.send(Command::InputChannel(settings.input_channel));
+    app.session.send(Command::Monitoring(settings.monitor));
     app.session.send(Command::InputGain(10f32.powf(settings.input_gain_db / 20.0)));
     app.session.send(Command::InputOffset(settings.input_offset_ms / 1000.0));
     app.session.send(Command::Volume(settings.backing_volume));
@@ -1123,6 +1131,7 @@ fn set_output(app: State<'_, App>, name: Option<String>) {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InputDevice {
+    channels: u16,
     name: String,
     current: bool,
     rocksmith: bool,
@@ -1136,7 +1145,7 @@ async fn audio_inputs(app: State<'_, App>) -> Result<Vec<InputDevice>, String> {
     Ok(devices
         .into_iter()
         .filter(|d| d.input_channels > 0 && runs_at(&d.input_rates, app.sample_rate))
-        .map(|d| InputDevice { current: current.as_deref() == Some(d.name.as_str()), rocksmith: d.rocksmith, name: d.name })
+        .map(|d| InputDevice { current: current.as_deref() == Some(d.name.as_str()), rocksmith: d.rocksmith, channels: d.input_channels, name: d.name })
         .collect())
 }
 
@@ -1188,6 +1197,8 @@ fn perf_log(line: String) {
 fn audio_status(app: State<'_, App>) -> AudioStatus {
     let info = app.session.info();
     AudioStatus {
+        input_channel: info.as_ref().map_or(0, |i| i.input_channel),
+        input_channels: info.as_ref().map_or(0, |i| i.input_channels),
         ready: info.is_some(),
         error: app.session.error(),
         input: info.as_ref().map(|i| i.input_name.clone()),
@@ -1275,7 +1286,7 @@ pub fn run() {
     let config = EngineConfig::default();
     let sample_rate = config.sample_rate;
     let session = SessionHandle::spawn(
-        move |d: Devices| Engine::start(EngineConfig { input: d.input, output: d.output, ..config.clone() }).map(EngineBackend).map_err(|e| e.to_string()),
+        move |d: Devices| Engine::start(EngineConfig { input: d.input, output: d.output, input_channel: d.input_channel, monitor: d.monitor, ..config.clone() }).map(EngineBackend).map_err(|e| e.to_string()),
         SessionConfig::default(),
     );
     // Backing track volume (`OPENSMITH_VOLUME`, linear; 0 for silent test runs).

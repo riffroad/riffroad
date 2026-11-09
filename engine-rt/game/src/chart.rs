@@ -16,6 +16,8 @@ pub enum ChartError {
     Template(usize),
     #[error("string {0} does not exist in the tuning")]
     String(u8),
+    #[error("invalid chart: {0}")]
+    Invalid(String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -197,16 +199,70 @@ impl Chart {
         if chart.format != "opensmith-chart" || chart.version != 1 {
             return Err(ChartError::Format { format: chart.format, version: chart.version });
         }
-        for c in &chart.chords {
-            if c.template >= chart.chord_templates.len() {
-                return Err(ChartError::Template(c.template));
+        chart.validate()?;
+        Ok(chart)
+    }
+
+    /// Validate before either the renderer or the judge indexes chart data. Never reorder
+    /// events: indices are shared by the renderer, judge and saved performances.
+    pub fn validate(&self) -> Result<(), ChartError> {
+        let chart = self;
+        let invalid = |why: &str| ChartError::Invalid(why.into());
+        let strings = chart.arrangement.tuning.strings.len();
+        if !(4..=6).contains(&strings) {
+            return Err(invalid("only arrangements with 4 to 6 strings are supported"));
+        }
+        if chart.arrangement.tuning.strings.iter().any(|m| !(0..=127).contains(m)) {
+            return Err(invalid("open-string pitches must be MIDI notes (0..127)"));
+        }
+        let duration = chart.meta.duration;
+        if !duration.is_finite() || duration <= 0.0 || !chart.audio.offset.is_finite() || !chart.arrangement.tuning.cents.is_finite() {
+            return Err(invalid("duration must be positive and audio/tuning offsets finite"));
+        }
+        if !chart.tempo.bpm.is_finite() || chart.tempo.bpm <= 0.0 || chart.tempo.time_signature.contains(&0) {
+            return Err(invalid("invalid tempo or time signature"));
+        }
+        let time = |t: f64| t.is_finite() && t >= 0.0 && t <= duration + 1e-6;
+        let ordered = |times: Vec<f64>| times.iter().all(|&t| time(t)) && times.windows(2).all(|w| w[0] <= w[1]);
+        for times in [chart.notes.iter().map(|n| n.time).collect(), chart.chords.iter().map(|c| c.time).collect(),
+            chart.beats.iter().map(|b| b.time).collect(), chart.anchors.iter().map(|a| a.time).collect()] {
+            if !ordered(times) { return Err(invalid("events must be in time order within the song")); }
+        }
+        let span = |start: f64, end: f64| time(start) && time(end) && start < end;
+        if chart.phrases.iter().any(|p| !span(p.start, p.end) || p.max_difficulty > chart.arrangement.max_difficulty)
+            || chart.phrases.windows(2).any(|w| w[0].end > w[1].start + 1e-6) {
+            return Err(invalid("phrases must be nonempty, ordered and nonoverlapping"));
+        }
+        if chart.sections.iter().any(|s| !span(s.start, s.end)) || chart.sections.windows(2).any(|w| w[0].start > w[1].start) {
+            return Err(invalid("invalid sections"));
+        }
+        for c in &chart.chord_templates {
+            if c.frets.len() != strings || c.fingers.len() != strings || !c.frets.iter().any(|&f| f >= 0)
+                || c.frets.iter().any(|&f| !(-1..=36).contains(&f)) || c.fingers.iter().any(|&f| !(-1..=4).contains(&f)) {
+                return Err(invalid("chord frets/fingers must match the tuning and contain playable positions"));
             }
         }
-        let strings = chart.arrangement.tuning.strings.len();
+        for template in chart.chords.iter().map(|c| c.template).chain(chart.hand_shapes.iter().map(|h| h.template)) {
+            if template >= chart.chord_templates.len() { return Err(ChartError::Template(template)); }
+        }
+        if chart.hand_shapes.iter().any(|h| !span(h.start, h.end)) || chart.anchors.iter().any(|a| a.width == 0 || a.fret > 36) {
+            return Err(invalid("invalid hand shape or anchor"));
+        }
         if let Some(n) = chart.notes.iter().find(|n| n.string as usize >= strings) {
             return Err(ChartError::String(n.string));
         }
-        Ok(chart)
+        for (t, sustain, levels) in chart.notes.iter().map(|n| (n.time, n.sustain, n.levels))
+            .chain(chart.chords.iter().map(|c| (c.time, c.sustain, c.levels))) {
+            if !sustain.is_finite() || sustain < 0.0 || levels[0] > levels[1] || levels[1] > chart.arrangement.max_difficulty
+                || !chart.phrases.iter().any(|p| p.start <= t && t < p.end) {
+                return Err(invalid("invalid sustain, difficulty or event outside a phrase"));
+            }
+        }
+        if chart.notes.iter().any(|n| n.fret > 36 || n.techniques.as_ref().is_some_and(|t|
+            t.slide_to.is_some_and(|f| f > 36) || t.bend.is_some_and(|b| !b.is_finite() || !(0.0..=12.0).contains(&b)))) {
+            return Err(invalid("invalid fret or technique"));
+        }
+        Ok(())
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Chart, ChartError> {

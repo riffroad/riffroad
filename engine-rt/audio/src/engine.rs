@@ -64,6 +64,7 @@ pub struct StreamInfo {
     pub output_name: String,
     pub sample_rate: u32,
     pub input_channels: u16,
+    pub input_channel: usize,
     pub output_channels: u16,
     pub requested_buffer: u32,
     /// Whether the requested buffer size was within the hardware range of both devices.
@@ -74,6 +75,7 @@ pub struct StreamInfo {
 
 #[derive(Default)]
 struct Shared {
+    started_ns: u64,
     in_callbacks: AtomicU64,
     out_callbacks: AtomicU64,
     in_frames: AtomicU64,
@@ -86,6 +88,7 @@ struct Shared {
     out_latency_ns: AtomicU64,
     /// Host time of the last input callback (ns, same clock as the output callback).
     in_callback_ns: AtomicU64,
+    out_callback_ns: AtomicU64,
     /// Smoothed virtual fill seen by the output callback, in 1/16 frames.
     fill_x16: AtomicU32,
     ring_min: AtomicU32,
@@ -370,6 +373,7 @@ impl OutputSide {
         sh.out_latency_ns.store(latency_ns, Relaxed);
         let frames = out.len() / self.channels;
         sh.out_callbacks.fetch_add(1, Relaxed);
+        sh.out_callback_ns.store(callback_ns, Relaxed);
         let played = sh.out_frames.fetch_add(frames as u64, Relaxed);
         sh.out_block.store(frames as u32, Relaxed);
 
@@ -520,6 +524,17 @@ impl Monitor {
         self.shared.monitor_enabled
     }
 
+    /// Device/stream errors require reopening; xruns recover without resetting statistics.
+    pub fn stream_failed(&self) -> bool { self.stream_failed_at(crate::host_now_ns()) }
+
+    /// Also catch a device which stops calling back without delivering an error. The host
+    /// clock is explicit so simulated devices can exercise exactly this failure path.
+    pub fn stream_failed_at(&self, now_ns: u64) -> bool {
+        let stale = |at: u64| now_ns.saturating_sub(if at == 0 { self.shared.started_ns } else { at }) > 2_000_000_000;
+        self.shared.error_kinds.load(Relaxed) & !1 != 0
+            || stale(self.shared.in_callback_ns.load(Relaxed)) || stale(self.shared.out_callback_ns.load(Relaxed))
+    }
+
     /// Largest |sample| of the guitar input (after the input gain) since the last call.
     pub fn take_peak(&mut self) -> f32 {
         f32::from_bits(self.shared.meter_bits.swap(0, Relaxed))
@@ -597,6 +612,7 @@ impl Bridge {
         tracker_cfg.pitch.sample_rate = sr as f32;
         tracker_cfg.onset.sample_rate = sr as f32;
         let shared = Arc::new(Shared {
+            started_ns: crate::host_now_ns(),
             ring_min: AtomicU32::new(u32::MAX),
             input_gain_bits: AtomicU32::new(1f32.to_bits()),
             monitor_gain_bits: AtomicU32::new(monitor_gain.to_bits()),
@@ -654,6 +670,7 @@ impl Engine {
         let in_def = in_dev.default_input_config().map_err(AudioError::backend("input configuration"))?;
         let out_def = out_dev.default_output_config().map_err(AudioError::backend("output configuration"))?;
         let (in_ch, out_ch) = (in_def.channels() as usize, out_def.channels() as usize);
+        if cfg.input_channel >= in_ch { return Err(AudioError::InputChannel { channel: cfg.input_channel + 1, channels: in_ch }); }
         let sr = cfg.sample_rate;
         let (in_buffer, input_fixed) = buffer_size(in_def.buffer_size(), cfg.buffer_frames);
         let (out_buffer, output_fixed) = buffer_size(out_def.buffer_size(), cfg.buffer_frames);
@@ -713,6 +730,7 @@ impl Engine {
 
         Ok(Engine {
             info: StreamInfo {
+                input_channel: cfg.input_channel,
                 input_name: in_dev.to_string(),
                 input_kind: kind,
                 output_name: out_dev.to_string(),

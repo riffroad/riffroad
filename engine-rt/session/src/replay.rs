@@ -107,6 +107,7 @@ pub struct Report {
     pub high: usize,
     pub low: usize,
     pub wrong_chord: usize,
+    pub technique: usize,
     /// Notes played that the chart did not ask for.
     pub extras: u32,
 }
@@ -138,6 +139,7 @@ impl Report {
                         UiMissReason::Pitch { semitones } if *semitones > 0 => r.high += 1,
                         UiMissReason::Pitch { .. } => r.low += 1,
                         UiMissReason::WrongChord => r.wrong_chord += 1,
+                        UiMissReason::Technique => r.technique += 1,
                     }
                 }
                 UiEvent::Late { .. } => {
@@ -175,7 +177,7 @@ impl fmt::Display for Report {
         let pct = |a: usize, b: usize| if b == 0 { "—".to_string() } else { format!("{:.0} %", 100.0 * a as f64 / b as f64) };
         write!(
             f,
-            "{} : notes {} ({}/{}), accords {} ({}/{}), timing {:+.0} ms ; ratées : {} pas jouées, {} tôt, {} tard, {} haut, {} bas, {} mauvais accord ; {} en trop",
+            "{} : notes {} ({}/{}), accords {} ({}/{}), timing {:+.0} ms ; ratées : {} pas jouées, {} tôt, {} tard, {} haut, {} bas, {} mauvais accord, {} techniques ; {} en trop",
             pct(self.hits(), self.judged()),
             pct(self.notes_hit, self.notes),
             self.notes_hit,
@@ -190,6 +192,7 @@ impl fmt::Display for Report {
             self.high,
             self.low,
             self.wrong_chord,
+            self.technique,
             self.extras
         )
     }
@@ -261,6 +264,7 @@ impl Agreement {
                     Some(UiMissReason::Timing { .. }) => "hors du temps",
                     Some(UiMissReason::Pitch { .. }) => "mauvaise hauteur",
                     Some(UiMissReason::WrongChord) => "mauvais accord",
+                    Some(UiMissReason::Technique) => "technique non réalisée",
                 };
                 let key = format!("{} {kind} → {reason}", if chord { "accord" } else { "note" }).replace("  ", " ");
                 match a.refused.iter_mut().find(|r| r.0 == key) {

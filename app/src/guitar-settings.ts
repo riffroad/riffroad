@@ -4,6 +4,9 @@ import type { Frame } from './engine/types';
 import { lang, t } from './i18n';
 
 export interface GuitarValues {
+  /** Zero-based input channel; monitoring: -1 automatic, 0 off, 1 on. */
+  inputChannel: number;
+  monitoring: number;
   inputGainDb: number;
   /** Latency compensation: subtracted from every attack (ms). */
   inputOffsetMs: number;
@@ -21,6 +24,8 @@ export interface GuitarValues {
 }
 
 export const DEFAULT_GUITAR: GuitarValues = {
+  inputChannel: 0,
+  monitoring: -1,
   inputGainDb: 0,
   inputOffsetMs: 0,
   visualOffsetMs: 0,
@@ -41,6 +46,8 @@ const decimal = (x: number): string => (lang() === 'en' ? x.toString() : x.toStr
 export function engineSettings(v: GuitarValues): InputSettings {
   const master = v.masterVolume ?? 1;
   return {
+    inputChannel: v.inputChannel ?? 0,
+    monitor: (v.monitoring ?? -1) < 0 ? null : v.monitoring === 1,
     inputGainDb: v.inputGainDb,
     inputOffsetMs: v.inputOffsetMs,
     backingVolume: (v.backingVolume * master) ** 2,
@@ -81,7 +88,9 @@ const TEMPLATE = `
   <section data-part="devices" data-tabs="audio">
     <h3>${t('Périphériques CoreAudio')}</h3>
     <label class="row">${t('Entrée')} <select data-el="input"></select></label>
+    <label class="row">${t('Canal d’entrée')} <select data-el="inputChannel" data-field="inputChannel"></select></label>
     <label class="row">${t('Sortie')} <select data-el="output"></select></label>
+    <label class="row">${t('Retour de la guitare')} <select data-field="monitoring"><option value="-1">${t('Automatique')}</option><option value="0">${t('Coupé')}</option><option value="1">${t('Activé (casque ou interface)')}</option></select></label>
     <p class="help">${t('Changer de périphérique redémarre le moteur audio : un morceau en cours s’arrête.')}</p>
   </section>
   <section data-part="level" data-tabs="audio latency">
@@ -104,7 +113,7 @@ const TEMPLATE = `
     <label class="row" data-el="monitorRow">${t('Guitare')} <input type="range" min="0" max="1" step="0.01" data-field="monitorVolume" /><output data-out="monitorVolume"></output></label>
     <label class="row">${t('Effets sonores')} <input type="range" min="0" max="1" step="0.01" data-field="effectsVolume" /><output data-out="effectsVolume"></output></label>
     <label class="row">${t('Public')} <input type="range" min="0" max="1" step="0.01" data-field="crowdVolume" /><output data-out="crowdVolume"></output></label>
-    <p class="help" data-el="monitorHelp" hidden>${t('Sans câble guitare USB, le retour de la guitare est coupé pour éviter le larsen.')}</p>
+    <p class="help" data-el="monitorHelp" hidden>${t('Le retour est coupé. Active-le pour entendre ta guitare via ton interface ; utilise un casque avec une entrée micro.')}</p>
   </section>
   <section data-part="amp" data-tabs="audio">
     <h3>${t('Profil d’ampli')}</h3>
@@ -137,6 +146,7 @@ type LevelStep = { phase: 'silence' | 'play'; until: number; noise: number; play
 
 export interface GuitarHooks {
   changed(v: GuitarValues): void;
+  refreshAudio?(): void;
   calibrate(): void;
   /** The Mac's devices (empty in the browser) and the switch to one (null: automatic). */
   inputs(): Promise<InputDevice[]>;
@@ -185,7 +195,10 @@ export class GuitarSettings {
         return;
       }
       if (name === 'input') {
+        this.values.inputChannel = 0;
         this.hooks.setInput(input.value || null);
+        this.hooks.changed(this.values);
+        void this.listDevices();
         this.el.device.textContent = t('Changement d’entrée…');
         return;
       }
@@ -199,6 +212,7 @@ export class GuitarSettings {
       this.values[field] = Number(input.value);
       this.sync();
       this.hooks.changed(this.values);
+      if (field === 'inputChannel' || field === 'monitoring') this.hooks.refreshAudio?.();
     });
     root.addEventListener('click', (e) => {
       const action = (e.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;
@@ -230,6 +244,12 @@ export class GuitarSettings {
       select.disabled = !list.length;
     };
     fill(this.el.input as HTMLSelectElement, t('Automatique : câble guitare USB, sinon l’entrée du Mac'), inputs);
+    const selected = inputs.find((d) => d.name === (this.el.input as HTMLSelectElement).value) ?? inputs.find((d) => d.current);
+    const channels = Math.max(1, selected?.channels ?? 1);
+    const channel = this.el.inputChannel as HTMLSelectElement;
+    channel.replaceChildren(...Array.from({ length: channels }, (_, k) => new Option(String(k + 1), String(k))));
+    channel.value = String(this.values.inputChannel ?? 0);
+    channel.disabled = channels < 2;
     fill(this.el.output as HTMLSelectElement, t('Sortie du Mac par défaut'), outputs);
   }
 
@@ -349,6 +369,8 @@ export class GuitarSettings {
 
   private sync(): void {
     const v = this.values;
+    (this.el.inputChannel as HTMLSelectElement).value = String(v.inputChannel ?? 0);
+    this.root.querySelector<HTMLSelectElement>('[data-field="monitoring"]')!.value = String(v.monitoring ?? -1);
     const out = (name: keyof GuitarValues, text: string) => {
       this.root.querySelector<HTMLInputElement>(`[data-field="${name}"]`)!.value = String(v[name]);
       this.root.querySelector(`[data-out="${name}"]`)!.textContent = text;

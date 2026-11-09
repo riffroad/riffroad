@@ -5,7 +5,8 @@
 //! since the attack holds `(1 + min_overlap)` fundamental periods (a periodicity must be seen
 //! repeating) — about 16 ms for the open low E (period 12.1 ms), 5-6 ms for the high e. The
 //! tracker re-analyses every `hop` samples (64 = one CoreAudio buffer), so confirmation arrives
-//! at the first buffer where the evidence is sufficient.
+//! after the pitch agrees across `confirm` consecutive analyses. The attack's timestamp does
+//! not move while the pitch settles.
 //!
 //! Segmentation. Besides attacks, a sustaining note is watched by a periodicity-break detector:
 //! every sample is predicted from the sample one period earlier, on the note's first five
@@ -85,7 +86,7 @@ impl Default for TrackerConfig {
             hop: 64,
             note_on_clarity: 0.9,
             hold_clarity: 0.6,
-            confirm: 1,
+            confirm: 6, // Five more buffers (6.67 ms at 48 kHz) reject transient attack pitches.
             min_level_db: -66.0,
             release_hysteresis_db: 6.0,
             max_pending_ms: 150.0,
@@ -470,7 +471,7 @@ impl NoteTracker {
         // it could first have been measured, not at that attack.
         let onset = if from.is_none() {
             let sr = self.cfg.pitch.sample_rate;
-            let measurable = now.saturating_sub((self.detector.min_window_for(e.freq_hz) + self.cfg.hop) as u64);
+            let measurable = now.saturating_sub((self.detector.min_window_for(e.freq_hz) + self.cfg.confirm.max(1) * self.cfg.hop) as u64);
             let settle = (self.cfg.settle_ms * 1e-3 * sr) as u64;
             if measurable > onset + settle + (LATE_PITCH_MS * 1e-3 * sr) as u64 {
                 // Where the sound rose the most since the attack, by 5 ms steps.

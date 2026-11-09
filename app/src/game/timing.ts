@@ -42,15 +42,17 @@ export interface MissCounts {
   high: number;
   low: number;
   chord: number;
+  technique: number;
   unplayed: number;
 }
 
 export function missCounts(reasons: readonly (MissReason | undefined)[]): MissCounts {
-  const n: MissCounts = { early: 0, late: 0, high: 0, low: 0, chord: 0, unplayed: 0 };
+  const n: MissCounts = { early: 0, late: 0, high: 0, low: 0, chord: 0, technique: 0, unplayed: 0 };
   for (const r of reasons) {
     if (r?.kind === 'timing') n[r.error < 0 ? 'early' : 'late']++;
     else if (r?.kind === 'pitch') n[r.semitones > 0 ? 'high' : 'low']++;
     else if (r?.kind === 'wrongChord') n.chord++;
+    else if (r?.kind === 'technique') n.technique++;
     else n.unplayed++;
   }
   return n;

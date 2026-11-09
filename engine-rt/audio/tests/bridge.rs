@@ -177,3 +177,39 @@ fn coincident_callbacks_in_random_order_settle() {
     assert!(st.underruns <= 2);
     assert_eq!(run.late_underruns, 0);
 }
+
+#[test]
+fn the_selected_input_channel_feeds_detection_and_monitoring() {
+    // The guitar is on input 2; input 1 carries a completely different signal.
+    for channel in [0, 1] {
+        let cfg = EngineConfig { input_channel: channel, ..Default::default() };
+        let mut bridge = Bridge::new(&cfg, 2, 2, 0.5);
+        assert!(bridge.monitor.monitor_enabled());
+        bridge.monitor.set_monitor_gain(0.25);
+        let block: Vec<f32> = (0..64).flat_map(|_| [0.01, 0.3]).collect();
+        bridge.input.process(&block, 1_000_000, 0);
+        let expected = if channel == 0 { 0.01 } else { 0.3 };
+        assert!((bridge.monitor.take_peak() - expected).abs() < 1e-6);
+        let mut tap = Vec::new(); bridge.monitor.drain_tap(|b| tap.extend_from_slice(b.samples()));
+        assert!(tap.iter().all(|v| (*v - expected).abs() < 1e-6));
+    }
+    let cfg = EngineConfig::default();
+    let mut bridge = Bridge::new(&cfg, 1, 2, 0.0);
+    bridge.monitor.set_monitor_gain(1.0);
+    assert!(!bridge.monitor.monitor_enabled(), "a gain change must not enable a microphone's return implicitly");
+}
+
+#[test]
+fn a_silent_disconnection_is_detected_on_either_callback_side() {
+    for input_stops in [false, true] {
+        let mut b = Bridge::new(&EngineConfig::default(), 1, 2, 0.0);
+        let start = opensmith_audio::host_now_ns();
+        b.input.process(&[0.0; BLOCK], start, 0);
+        b.output.process(&mut [0.0; BLOCK * 2], start, 0);
+        assert!(!b.monitor.stream_failed_at(start + 100_000_000));
+        let later = start + 2_100_000_000;
+        if input_stops { b.output.process(&mut [0.0; BLOCK * 2], later, 0); }
+        else { b.input.process(&[0.0; BLOCK], later, 0); }
+        assert!(b.monitor.stream_failed_at(later), "stalled side, input={input_stops}");
+    }
+}

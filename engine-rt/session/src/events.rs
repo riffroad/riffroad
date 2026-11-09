@@ -71,6 +71,7 @@ pub enum UiMissReason {
     /// Positive when too high.
     Pitch { semitones: i32 },
     WrongChord,
+    Technique,
 }
 
 impl From<MissReason> for UiMissReason {
@@ -80,6 +81,7 @@ impl From<MissReason> for UiMissReason {
             MissReason::Timing { error } => UiMissReason::Timing { error },
             MissReason::Pitch { semitones } => UiMissReason::Pitch { semitones },
             MissReason::WrongChord => UiMissReason::WrongChord,
+            MissReason::Technique => UiMissReason::Technique,
         }
     }
 }

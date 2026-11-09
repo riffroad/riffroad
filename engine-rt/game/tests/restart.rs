@@ -24,6 +24,7 @@ fn play_perfectly(game: &mut Game, from: f64, until: f64) {
                 Target::Chord { .. } => drop(game.on_chord(index, true, Some(time))),
             }
         }
+        game.autoplay(t);
         game.advance(t);
     }
 }

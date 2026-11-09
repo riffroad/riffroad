@@ -832,6 +832,7 @@ async function watchCable(s: AudioStatus): Promise<void> {
 }
 
 const guitarSettings = new GuitarSettings($('guitarSettings'), settings, {
+  refreshAudio,
   changed: () => {
     syncSettings();
     applyVolumes();
@@ -2389,6 +2390,7 @@ function showTiming(v: GameView): void {
     n.high && tn(n.high, '{n} trop haute', '{n} trop hautes'),
     n.low && tn(n.low, '{n} trop basse', '{n} trop basses'),
     n.chord && tn(n.chord, '{n} mauvais accord', '{n} mauvais accords'),
+    n.technique && tn(n.technique, '{n} technique non réalisée', '{n} techniques non réalisées'),
     n.unplayed && tn(n.unplayed, '{n} pas jouée', '{n} pas jouées'),
   ].filter(Boolean);
   if (parts.length) line(t('Notes ratées : {list}', { list: parts.join(' · ') }));

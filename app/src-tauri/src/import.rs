@@ -971,7 +971,8 @@ fn run(inner: &Inner, id: u32) {
         let st = inner.state.lock().unwrap();
         (st.jobs.iter().any(|j| j.id == id && j.state == JobState::Cancelled), st.closing)
     };
-    let ok = matches!(status, Some(Ok(s)) if s.success()) && !charts.is_empty();
+    let validation_error = charts.iter().find_map(|path| opensmith_game::Chart::load(path).err().map(|e| format!("{} : {e}", path.display())));
+    let ok = matches!(status, Some(Ok(s)) if s.success()) && !charts.is_empty() && validation_error.is_none();
     if !ok {
         if target.is_none() {
             let _ = fs::remove_dir_all(&out);
@@ -987,7 +988,7 @@ fn run(inner: &Inner, id: u32) {
             });
             return;
         }
-        let why = reported.or_else(|| tail.back().cloned()).unwrap_or_else(|| "the conversion failed".into());
+        let why = validation_error.or(reported).or_else(|| tail.back().cloned()).unwrap_or_else(|| "the conversion failed".into());
         return fail(why);
     }
     if let Some(origin) = Origin::of(&source).filter(|_| target.is_none()) {
@@ -1025,6 +1026,11 @@ mod tests {
     /// A stand-in pipeline: a shell script receiving `<command> <file> -o <dir> --progress-json`.
     fn fake(dir: &Path, body: &str) -> Pipeline {
         let script = dir.join("fake-ingest.sh");
+        // Job-control tests still emit a real valid chart. Invalid/unsupported imports are
+        // checked before a conversion is reported successful.
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../engine-rt/game/tests/fixtures/demo_rock.json");
+        let quoted = fixture.to_string_lossy().replace('\'', "'\\''");
+        let body = body.replace("echo '{}'", &format!("cat '{quoted}'"));
         fs::write(&script, format!("#!/bin/sh\nout=\"$4\"\n{body}\n")).unwrap();
         Pipeline { program: "/bin/sh".into(), args: vec![script.to_string_lossy().into_owned()], path: std::env::var("PATH").unwrap_or_default(), install: None }
     }
@@ -1131,6 +1137,24 @@ echo '{"done": true, "title": "Song"}'"#,
     }
 
     #[test]
+    fn unsupported_or_inconsistent_imported_charts_are_errors_not_successful_jobs() {
+        for kind in ["seven-strings", "inconsistent-shape"] {
+            let mut chart: serde_json::Value = serde_json::from_str(include_str!("../../../engine-rt/game/tests/fixtures/demo_rock.json")).unwrap();
+            if kind == "seven-strings" { chart["arrangement"]["tuning"]["strings"] = serde_json::json!([35, 40, 45, 50, 55, 59, 64]); }
+            else { chart["chordTemplates"][0]["frets"] = serde_json::json!([0, 0, 0, 0, 0, 0, 0]); }
+            let json = chart.to_string().replace('\'', "'\\''");
+            let body = format!("mkdir -p \"$out\"\nprintf '%s' '{json}' > \"$out/song_chart.json\"\necho '{{\"done\":true}}'");
+            let (importer, rx, _library, song) = setup(kind, &body);
+            importer.add(&song).unwrap();
+            let jobs = until_finished(&rx);
+            let result = jobs.last().unwrap();
+            assert_eq!(result.state, JobState::Failed);
+            assert!(result.error.as_deref().is_some_and(|e| e.contains("strings") || e.contains("frets/fingers")), "{:?}", result.error);
+            assert!(result.song.is_none());
+        }
+    }
+
+    #[test]
     fn a_built_app_installs_its_pipeline_before_the_first_import() {
         use std::os::unix::fs::PermissionsExt;
         let dir = scratch("install");
@@ -1159,7 +1183,7 @@ fi
 out="${10}"
 mkdir -p "$out" && echo '{}' > "$out/song_chart.json"
 echo '{"done": true, "title": "Song"}'
-"#,
+"#.replace("echo '{}'", &format!("cat '{}'", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../engine-rt/game/tests/fixtures/demo_rock.json").display())),
         )
         .unwrap();
         fs::set_permissions(&uv, fs::Permissions::from_mode(0o755)).unwrap();

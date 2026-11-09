@@ -7,6 +7,7 @@
 
 pub mod chart;
 pub mod game;
+mod performance;
 
 pub use chart::{Chart, ChartError};
 pub use game::{Expected, Game, GameConfig, Judgement, MissReason, Score, Status, Target};

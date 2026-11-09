@@ -87,7 +87,7 @@ fn play_tuned_into(out: &mut Vec<f32>, chart: &Chart, keep: impl Fn(f64) -> bool
         };
         for (j, m) in pitches.iter().enumerate() {
             let mut p = Pluck::new(440.0 * 2f32.powf(((m - 69) as f32 + cents / 100.0) / 12.0));
-            p.secs = (next - when(*time)).clamp(0.08, 1.0) as f32;
+            p.secs = (next - when(*time)).clamp(0.08, 3.0) as f32;
             p.amp = if pitches.len() > 1 { 0.22 } else { 0.4 };
             p.pluck_pos = rng.range(0.12, 0.3);
             let mut sound = p.render(SR as f32, &mut rng);
@@ -474,7 +474,7 @@ fn slowed_down_the_latency_compensation_stays_in_real_time() {
     rig.session.play();
     rig.run(heard(8.0));
     let o = outcome(&rig.events);
-    assert!(o.hits.len() > 10 && o.hits.len() as f64 >= 0.9 * (o.hits.len() + o.misses) as f64, "{} hits, {} misses", o.hits.len(), o.misses);
+    assert!(o.hits.len() > 10 && o.hits.len() as f64 >= 0.9 * (o.hits.len() + o.misses) as f64, "{} hits, {} misses: {:?}", o.hits.len(), o.misses, rig.events.iter().filter(|e| matches!(e, UiEvent::Miss { .. })).collect::<Vec<_>>());
     let mean = o.hits.iter().map(|h| h.0).sum::<f64>() / o.hits.len() as f64;
     assert!(mean.abs() < 0.006, "mean error {mean} at half speed");
 }
@@ -651,7 +651,9 @@ fn in_wait_mode_the_song_stops_on_each_note_until_the_guitar_plays_it() {
                     let at = input_index(host + REACT);
                     for (j, m) in midis.iter().enumerate() {
                         let mut p = Pluck::new(440.0 * 2f32.powf((m - 69) as f32 / 12.0));
-                        p.secs = 0.6;
+                        let held = chart.notes.iter().find(|n| n.time == time).map(|n| n.sustain)
+                            .or_else(|| chart.chords.iter().find(|c| c.time == time).map(|c| c.sustain)).unwrap_or(0.6);
+                        p.secs = held.max(0.6) as f32 + 0.1;
                         p.amp = if midis.len() > 1 { 0.22 } else { 0.4 };
                         let sound = p.render(SR as f32, &mut rng);
                         mix_into(&mut rig.guitar, &sound, at + j * (0.008 * SR) as usize, 1.0);
@@ -676,4 +678,90 @@ fn in_wait_mode_the_song_stops_on_each_note_until_the_guitar_plays_it() {
     assert!(o.hits.iter().all(|h| h.0.abs() < 1e-6 && h.1), "on the beat: the song waited for them");
     // It stood still: twelve seconds of song took more than REACT longer each.
     assert!(host > heard_at(SONG - 1.0) + REACT * early.len() as f64);
+}
+
+/// A phrase ending exactly with its audio, and an item whose verification finishes after it.
+fn final_item(chord: bool) -> Chart {
+    let mut c = chart();
+    c.meta.duration = 1.2; c.audio.offset = 0.0;
+    c.phrases.truncate(1); c.phrases[0].start = 0.0; c.phrases[0].end = 1.2;
+    if chord {
+        c.notes.clear(); c.chords.truncate(1);
+        c.chords[0].time = 1.15; c.chords[0].sustain = 0.0; c.chords[0].levels = [0, LEVEL];
+    } else {
+        c.chords.clear(); c.notes.truncate(1);
+        c.notes[0].time = 1.15; c.notes[0].sustain = 0.0; c.notes[0].levels = [0, LEVEL]; c.notes[0].techniques = None;
+    }
+    c
+}
+
+#[test]
+fn the_last_miss_phrase_and_final_score_are_published_before_end_once() {
+    let c = final_item(false);
+    let mut rig = Rig::new(vec![]);
+    rig.session.load(c.clone(), Some(silent_track(c.meta.duration)), -COUNT_IN);
+    rig.session.play(); rig.run(heard_at(c.meta.duration) + 1.0);
+    let end = rig.events.iter().position(|e| matches!(e, UiEvent::End)).expect("song ended");
+    assert_eq!(rig.events.iter().filter(|e| matches!(e, UiEvent::End)).count(), 1);
+    let before = &rig.events[..end];
+    assert_eq!(before.iter().filter(|e| matches!(e, UiEvent::Miss { .. })).count(), 1);
+    assert_eq!(before.iter().filter(|e| matches!(e, UiEvent::Phrase { accuracy, .. } if *accuracy == 0.0)).count(), 1);
+    assert!(before.iter().any(|e| matches!(e, UiEvent::Score { score } if score.misses == 1 && score.hits == 0)));
+    assert!(!rig.events[end+1..].iter().any(|e| matches!(e, UiEvent::Hit { .. } | UiEvent::Miss { .. } | UiEvent::Score { .. })));
+}
+
+#[test]
+fn the_last_note_and_chord_can_be_confirmed_after_the_backing_stops() {
+    for chord in [false, true] {
+        let c = final_item(chord);
+        let mut rig = Rig::new(performance(&c, 0.06));
+        rig.session.load(c.clone(), Some(silent_track(c.meta.duration)), -COUNT_IN);
+        rig.session.play(); rig.run(heard_at(c.meta.duration) + 1.0);
+        let o = outcome(&rig.events);
+        assert_eq!((o.hits.len(), o.misses), (1, 0), "last item, chord={chord}: {:?}", rig.events);
+        let end = rig.events.iter().position(|e| matches!(e, UiEvent::End)).unwrap();
+        assert!(rig.events[..end].iter().any(|e| matches!(e, UiEvent::Phrase { accuracy, .. } if *accuracy == 1.0)));
+    }
+}
+
+/// Controlled continuous string vibration fed to the real tracker, through both device clocks.
+fn gesture(techniques: opensmith_game::chart::Techniques, sustain: f64, seconds: f64, shift: impl Fn(f64) -> f64, t60: f64) -> bool {
+    let mut c = final_item(false); c.meta.duration = 3.0; c.phrases[0].end = 3.0;
+    let n = &mut c.notes[0]; n.time = 1.0; n.string = 2; n.fret = 5; n.sustain = sustain; n.techniques = Some(techniques);
+    let first = input_index(heard_at(1.0));
+    let mut guitar = vec![0.0; first + (seconds * SR) as usize + BLOCK];
+    let mut phase = 0.0;
+    for k in 0..(seconds * SR) as usize {
+        let t = k as f64 / SR;
+        let hz = 440.0 * 2f64.powf((55.0 + shift(t) - 69.0) / 12.0);
+        phase += std::f64::consts::TAU * hz / SR;
+        let env = (t / 0.002).min(1.0) * ((seconds - t) / 0.005).min(1.0) * (-6.9 * t / t60).exp();
+        guitar[first + k] = (env * (0.3 * phase.sin() + 0.12 * (2.0 * phase).sin() + 0.05 * (3.0 * phase).sin())) as f32;
+    }
+    let mut rig = Rig::new(guitar);
+    rig.session.load(c, None, -COUNT_IN); rig.session.play(); rig.run(heard_at(4.0));
+    let o = outcome(&rig.events);
+    assert_eq!(o.hits.len() + o.misses, 1, "exactly one final judgement: {:?}", rig.events);
+    !o.hits.is_empty()
+}
+
+#[test]
+fn the_audio_path_checks_sustain_bend_slide_vibrato_and_palm_mute() {
+    use opensmith_game::chart::Techniques;
+    assert!(gesture(Techniques::default(), 0.6, 0.8, |_| 0.0, 3.0), "held note");
+    assert!(!gesture(Techniques::default(), 0.6, 0.08, |_| 0.0, 3.0), "short attack cannot be held");
+    assert!(!gesture(Techniques::default(), 0.6, 0.8, |t| if t < 0.1 { 0.0 } else { -12.0 }, 3.0), "a lower octave after the attack cannot prove the hold via its harmonics");
+    let bend = Techniques { bend: Some(2.0), ..Default::default() };
+    assert!(gesture(bend.clone(), 0.6, 0.8, |t| 2.0 * ((t - 0.08) / 0.35).clamp(0.0, 1.0), 3.0), "correct bend");
+    assert!(!gesture(bend.clone(), 0.6, 0.8, |_| 0.0, 3.0), "straight note instead of bend");
+    assert!(!gesture(bend, 0.6, 0.8, |t| ((t - 0.08) / 0.35).clamp(0.0, 1.0), 3.0), "one semitone is not two");
+    let slide = Techniques { slide_to: Some(9), ..Default::default() };
+    assert!(gesture(slide.clone(), 0.6, 0.8, |t| 4.0 * ((t - 0.08) / 0.35).clamp(0.0, 1.0), 3.0), "correct slide");
+    assert!(!gesture(slide, 0.6, 0.8, |_| 0.0, 3.0), "straight note instead of slide");
+    let vib = Techniques { vibrato: Some(true), ..Default::default() };
+    assert!(gesture(vib.clone(), 0.6, 0.8, |t| if t < 0.07 { 0.0 } else { 0.22 * (std::f64::consts::TAU * 5.0 * (t - 0.07)).sin() }, 3.0), "vibrato");
+    assert!(!gesture(vib, 0.6, 0.8, |_| 0.0, 3.0), "straight note instead of vibrato");
+    let pm = Techniques { palm_mute: Some(true), ..Default::default() };
+    assert!(gesture(pm.clone(), 0.0, 0.3, |_| 0.0, 0.3), "damped pitched note");
+    assert!(!gesture(pm, 0.0, 0.8, |_| 0.0, 3.0), "ringing note instead of palm mute");
 }

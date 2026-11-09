@@ -44,6 +44,8 @@ pub trait AudioBackend {
     fn info(&self) -> Option<StreamInfo> {
         None
     }
+    /// A failed stream must be rebuilt; the session thread keeps accepting settings meanwhile.
+    fn failure(&mut self) -> Option<String> { None }
 }
 
 /// How forgiving the judge is: the player's choice (Settings → Game), strict to lenient.
@@ -60,11 +62,11 @@ pub struct Judging {
 }
 
 impl Judging {
-    // Measured on the virtual guitarist's 24 songs, a beginner's right playing counted / wrong
-    // refused: strict 85.7 / 83.5 %, normal 88.3 / 81.4 %, lenient 93.1 / 72.8 %.
-    pub const STRICT: Judging = Judging { hit_window: 0.10, chord_share: 0.75, heard: 0.5, foreign: 0.85 };
-    pub const NORMAL: Judging = Judging { hit_window: 0.10, chord_share: 0.66, heard: 0.4, foreign: 0.93 };
-    pub const LENIENT: Judging = Judging { hit_window: 0.12, chord_share: 0.5, heard: 0.4, foreign: 0.97 };
+    // Timing and chord tolerance vary with the preset. Single notes still require the right
+    // pitch and octave, whatever the preset.
+    pub const STRICT: Judging = Judging { hit_window: 0.10, chord_share: 0.75, heard: 0.5, foreign: 0.65 };
+    pub const NORMAL: Judging = Judging { hit_window: 0.10, chord_share: 0.66, heard: 0.4, foreign: 0.75 };
+    pub const LENIENT: Judging = Judging { hit_window: 0.12, chord_share: 0.5, heard: 0.4, foreign: 0.85 };
 
     pub fn by_name(name: &str) -> Option<Judging> {
         match name {
@@ -73,6 +75,13 @@ impl Judging {
             "lenient" => Some(Judging::LENIENT),
             _ => None,
         }
+    }
+
+    fn chord(&self, chart: &Chart, template: usize) -> (Vec<i32>, Vec<i32>) {
+        // Strict means the written third too, even on an approximate audio transcription.
+        // Normal/lenient keep the transcription's explicit major/minor uncertainty.
+        if *self == Judging::STRICT { (chart.chord_pitches(template), chart.brushable(template)) }
+        else { chart.judged(template) }
     }
 }
 
@@ -129,8 +138,16 @@ pub struct Session<B: AudioBackend> {
     verifier: ChordVerifier,
     scratch: Vec<f32>,
     attacks: VecDeque<f64>,
+    /// Confirmed pitches by input attack sample, so the fallback cannot override a clear
+    /// different note (including an octave) with a harmonic response from the network.
+    attack_pitches: VecDeque<(u64, f64)>,
+    pitch_history: VecDeque<(u64, f64)>,
+    level_history: VecDeque<(u64, f32)>,
+    last_sustain_sample: u64,
     last_score: Score,
     ended: bool,
+    /// Keep the running audio/host mapping while the stopped player drains its final input.
+    last_playing_clock: Option<PlayerClock>,
     tuner: bool,
     /// Tuner mode's own analysis, on a long window of the input.
     tuning: Option<TunerAnalyzer>,
@@ -171,6 +188,8 @@ struct Waiting {
     from: u64,
     /// Attacks heard since (input samples), not checked yet.
     attacks: Vec<u64>,
+    attempt: Option<u64>,
+    paused: bool,
 }
 
 /// The learned note detector (`opensmith_dsp::notenet`) and its working buffers.
@@ -247,13 +266,22 @@ const STRUM_LOOKS: [f64; 3] = [-0.01, 0.015, 0.04];
 /// surely, but for an open string next to the chord's that the strum brushed on its way
 /// (`brushable`): beginners do it all the time, and it is still the chord.
 fn strummed(first: i32, probs: &[f32], pitches: &[i32], brushable: &[i32], judging: &Judging) -> bool {
+    if pitches.is_empty() { return false; }
     let p = |m: i32| probs.get((m - first) as usize).copied().unwrap_or(0.0);
     let heard = pitches.iter().filter(|&&m| p(m) >= judging.heard).count();
     let classes: Vec<i32> = pitches.iter().map(|m| m.rem_euclid(12)).collect();
+    // Tolerance may forgive an omitted doubling, never erase the bass or a chord's harmonic
+    // identity (root/third/fifth). Otherwise changing one string can become a valid chord.
+    let bass = pitches.iter().min().copied().unwrap();
+    let identity = p(bass) >= judging.heard && classes.iter().all(|class|
+        pitches.iter().any(|&m| m.rem_euclid(12) == *class && p(m) >= judging.heard));
     let foreign = (0..probs.len() as i32)
         .map(|k| k + first)
-        .any(|m| !classes.contains(&m.rem_euclid(12)) && !brushable.contains(&m) && p(m) >= judging.foreign);
-    heard as f32 >= (judging.chord_share * pitches.len() as f32 - 1e-4).ceil() && !foreign
+        .any(|m| !classes.contains(&m.rem_euclid(12)) && !brushable.contains(&m) && p(m) >= judging.foreign
+            // The network sometimes leaks a neighbouring bin under a much stronger true
+            // pitch. A real foreign note must not be explained by that dominant neighbour.
+            && !pitches.iter().any(|&expected| (m - expected).abs() == 1 && p(expected) >= p(m) + 0.1));
+    identity && heard as f32 >= (judging.chord_share * pitches.len() as f32 - 1e-4).ceil() && !foreign
 }
 
 /// Sounds the session may be asked to play over the music (interface, crowd): mono at their
@@ -298,8 +326,13 @@ impl<B: AudioBackend> Session<B> {
             verifier: ChordVerifier::new(chord_config()),
             scratch: Vec::new(),
             attacks: VecDeque::new(),
+            attack_pitches: VecDeque::new(),
+            pitch_history: VecDeque::new(),
+            level_history: VecDeque::new(),
+            last_sustain_sample: 0,
             last_score: Score::default(),
             ended: false,
+            last_playing_clock: None,
             tuner: false,
             tuning: None,
             autopilot: false,
@@ -601,6 +634,7 @@ impl<B: AudioBackend> Session<B> {
     }
 
     pub fn play(&mut self) {
+        if let Some(w) = self.waiting.take() { self.waived.insert(w.index); }
         self.backend.monitor().send(PlayerCommand::Play);
     }
 
@@ -728,19 +762,28 @@ impl<B: AudioBackend> Session<B> {
         let (sr, offset) = (self.sample_rate, self.offset);
         let history = &mut self.history;
         let recording = &mut self.recording;
+        let levels = &mut self.level_history;
         self.backend.monitor().drain_tap(|b| {
             history.push(b.first, b.samples());
+            let power = b.samples().iter().map(|x| x * x).sum::<f32>() / b.samples().len().max(1) as f32;
+            levels.push_back((b.first + b.samples().len() as u64 / 2, 10.0 * power.max(1e-12).log10()));
             if let Some(r) = recording.as_mut() {
                 r.pending.push((b.first, b.samples().to_vec()));
             }
         });
         let mut onsets = Vec::new();
         let mut notes = Vec::new();
+        let pitches = &mut self.pitch_history;
+        let cents = self.cents;
         self.backend.monitor().poll_events(|e| match e {
             TrackerEvent::Onset { sample } => onsets.push(sample),
             TrackerEvent::NoteOn { onset_sample, midi, cents, .. } => notes.push((onset_sample, midi, cents)),
+            TrackerEvent::Pitch { sample, midi_f, clarity, .. } if clarity >= 0.8 => pitches.push_back((sample, midi_f as f64 - cents / 100.0)),
             _ => {}
         });
+        let oldest = self.history.end().saturating_sub((0.5 * sr) as u64);
+        self.pitch_history.retain(|&(s, _)| s >= oldest);
+        self.level_history.retain(|&(s, _)| s >= oldest);
         self.tune();
         // Out of a song, what the guitar plays still shows on the strings.
         if !self.synced_clock().is_some_and(|c| c.playing) {
@@ -750,12 +793,22 @@ impl<B: AudioBackend> Session<B> {
             }
         }
         // Until the player applied the last load or seek, what was heard belongs to the past.
-        let Some(clock) = self.synced_clock() else {
+        let Some(mut clock) = self.synced_clock() else {
             if let Some(r) = &mut self.recording {
                 r.pending.clear();
             }
             return;
         };
+        if self.ended { return; }
+        let audio_ended = self.has_track && clock.ended;
+        let audio_end = clock.frame as f64 / sr - offset;
+        if clock.playing {
+            self.last_playing_clock = Some(clock);
+        } else if audio_ended {
+            // A stopped clock maps every late input sample onto the same song time. Keep
+            // the last running mapping until pending notes/chords have their audio to judge.
+            clock = *self.last_playing_clock.get_or_insert(PlayerClock { playing: true, ..clock });
+        }
         if clock.loops != self.loops_seen {
             self.loops_seen = clock.loops;
             self.next_pass();
@@ -784,6 +837,9 @@ impl<B: AudioBackend> Session<B> {
         // A note's attack is a strum too when the onset detector missed it (a chord over a
         // ringing one).
         self.attacks.extend(heard.iter().map(|h| h.0));
+        self.attack_pitches.extend(notes.iter().map(|&(s, m, c)| (s, heard_pitch(m, c, self.cents))));
+        let oldest = self.history.end().saturating_sub((ATTACK_MEMORY * sr) as u64);
+        self.attack_pitches.retain(|&(s, _)| s >= oldest);
 
         if let Some(cal) = self.calibration.as_mut() {
             for &t in &strums {
@@ -807,66 +863,108 @@ impl<B: AudioBackend> Session<B> {
         if self.wait {
             let input_now = monitor.input_index_at(host_now).map_or(0, |i| i.max(0.0) as u64);
             match self.waiting.take() {
+                // Already played on the beat, before the pause reached the output callback.
+                Some(w) if game.expected()[w.index].status == Status::Hit => { monitor.send(PlayerCommand::Play); }
+                // A larger output buffer can acknowledge Pause after the next session tick.
+                Some(mut w) if clock.playing && !w.paused => {
+                    w.attacks.extend(onsets.iter().chain(notes.iter().map(|n| &n.0)).copied().filter(|&s| s >= w.from));
+                    self.waiting = Some(w);
+                }
                 // Resumed by hand (the pause menu): that one is let go.
                 Some(w) if clock.playing => {
                     self.waived.insert(w.index);
                 }
                 Some(mut w) => {
+                    if !w.paused { game.begin_waiting(); w.paused = true; }
+                    if w.attempt.is_none() {
+                        if let (Some(attack), Some(running)) = (game.performed_attack(w.index), self.last_playing_clock) {
+                            w.attempt = monitor.input_index_at(running.host_at(attack + offset, sr)).map(|s| s.max(0.0) as u64);
+                        }
+                    }
                     w.attacks.extend(onsets.iter().chain(notes.iter().map(|n| &n.0)).copied().filter(|&s| s >= w.from));
                     let listen = self.listener.as_ref().map_or(self.cfg.chord_window, Listener::after);
                     let ready = input_now.saturating_sub(((STRUM + listen + TAP_DELAY) * sr) as u64);
                     let e = &game.expected()[w.index];
                     let (index, time) = (w.index, e.time);
-                    let judging = self.cfg.judging;
-                    let (listener, history, cents) = (&mut self.listener, &self.history, self.cents);
-                    let played = match &e.target {
-                        Target::Note { midi, .. } => {
-                            let midi = *midi;
-                            // The tracker's pitch, else the detector at an attack.
-                            notes.iter().any(|&(s, m, c)| s >= w.from && (heard_pitch(m, c, cents) - midi as f64).abs() < 0.5)
-                                || w.attacks.iter().filter(|&&a| a <= ready).any(|&a| {
-                                    listener
-                                        .as_mut()
-                                        .and_then(|l| l.attacked_at(history, a, cents))
-                                        .is_some_and(|(first, probs)| probs.get((midi - first) as usize).is_some_and(|&p| p >= judging.heard))
-                                })
+                    if let Some(attack) = w.attempt {
+                        let at = time + self.cfg.game.input_offset * self.rate;
+                        for &(sample, pitch) in self.pitch_history.iter().filter(|&&(s, _)| s >= attack) {
+                            game.observe_pitch(at + (sample - attack) as f64 / sr * self.rate, pitch);
                         }
-                        Target::Chord { template, .. } => {
-                            let (midis, brushable) = game.chart().judged(*template);
-                            let midis = &midis;
-                            w.attacks.iter().filter(|&&a| a <= ready).any(|&a| match listener.as_mut() {
-                                Some(l) => {
-                                    let mut best: Option<(i32, Vec<f32>)> = None;
-                                    for d in STRUM_LOOKS {
-                                        let at = (a as f64 + (d - STRUM / 2.0) * sr).max(0.0) as u64;
-                                        let Some((first, probs)) = l.attacked_at(history, at, cents) else { return false };
-                                        match best.as_mut() {
-                                            Some((_, b)) => b.iter_mut().zip(&probs).for_each(|(b, p)| *b = b.max(*p)),
-                                            None => best = Some((first, probs)),
-                                        }
-                                    }
-                                    best.is_some_and(|(first, probs)| strummed(first, &probs, midis, &brushable, &judging))
-                                }
-                                None => {
-                                    self.scratch.resize((self.cfg.chord_window * sr) as usize, 0.0);
-                                    let a4 = self.cfg.a4 * 2f32.powf(cents as f32 / 1200.0);
-                                    history.read(a, &mut self.scratch) && self.verifier.verify(&self.scratch, midis, a4).accepted
-                                }
-                            })
+                        for &(sample, db) in self.level_history.iter().filter(|&&(s, _)| s >= attack) {
+                            game.observe_level(at + (sample - attack) as f64 / sr * self.rate, db);
                         }
-                    };
-                    if played {
-                        // On the beat: the song waited for it.
-                        let at = Some(time + self.cfg.game.input_offset);
-                        let judged = match game.expected()[index].target {
-                            Target::Note { .. } => game.on_note_heard(index, true, at),
-                            Target::Chord { .. } => game.on_chord(index, true, at),
-                        };
-                        self.events.extend(judged.map(UiEvent::from));
-                        monitor.send(PlayerCommand::Play);
+                        let judged = game.finish_waiting(index, input_now.saturating_sub(attack) as f64 / sr * self.rate);
+                        if let Some(judged) = judged {
+                            self.events.push(judged.into());
+                            monitor.send(PlayerCommand::Play);
+                        } else {
+                            if !game.performing(index) { w.attempt = None; w.from = input_now; w.attacks.clear(); }
+                            self.waiting = Some(w);
+                        }
                     } else {
-                        w.attacks.retain(|&a| a > ready);
-                        self.waiting = Some(w);
+                        let judging = self.cfg.judging;
+                        let (listener, history, cents) = (&mut self.listener, &self.history, self.cents);
+                        let played = match &e.target {
+                            Target::Note { midi, .. } => {
+                                let midi = *midi;
+                                // The tracker's pitch, else the detector at an attack.
+                                notes.iter().find_map(|&(s, m, c)| (s >= w.from && game.pitch_matches(heard_pitch(m, c, cents), midi)).then_some(s))
+                                    .or_else(|| w.attacks.iter().copied().filter(|&a| a <= ready).find(|&a| {
+                                        if attack_pitch(&self.attack_pitches, a as f64, sr).is_some_and(|p| !game.pitch_matches(p, midi)) {
+                                            return false;
+                                        }
+                                        listener
+                                            .as_mut()
+                                            .and_then(|l| l.attacked_at(history, a, cents))
+                                            .is_some_and(|(first, probs)| heard_note(first, &probs, midi, judging.heard))
+                                    }))
+                            }
+                            Target::Chord { template, .. } => {
+                                let (midis, brushable) = judging.chord(game.chart(), *template);
+                                let midis = &midis;
+                                w.attacks.iter().copied().filter(|&a| a <= ready).find(|&a| match listener.as_mut() {
+                                    Some(l) => {
+                                        let mut best: Option<(i32, Vec<f32>)> = None;
+                                        for d in STRUM_LOOKS {
+                                            let at = (a as f64 + (d - STRUM / 2.0) * sr).max(0.0) as u64;
+                                            let Some((first, probs)) = l.attacked_at(history, at, cents) else { return false };
+                                            match best.as_mut() {
+                                                Some((_, b)) => b.iter_mut().zip(&probs).for_each(|(b, p)| *b = b.max(*p)),
+                                                None => best = Some((first, probs)),
+                                            }
+                                        }
+                                        best.is_some_and(|(first, probs)| strummed(first, &probs, midis, &brushable, &judging))
+                                    }
+                                    None => {
+                                        self.scratch.resize((self.cfg.chord_window * sr) as usize, 0.0);
+                                        let a4 = self.cfg.a4 * 2f32.powf(cents as f32 / 1200.0);
+                                        history.read(a, &mut self.scratch) && self.verifier.verify(&self.scratch, midis, a4).accepted
+                                    }
+                                })
+                            }
+                        };
+                        if let Some(attack) = played {
+                            // On the beat: the song waited for it.
+                            let at = Some(time + self.cfg.game.input_offset * self.rate);
+                            let judged = match game.expected()[index].target {
+                                Target::Note { .. } => game.on_note_heard(index, true, at),
+                                Target::Chord { .. } => game.on_chord(index, true, at),
+                            };
+                            if let Some(judged) = judged {
+                                self.events.push(judged.into());
+                                monitor.send(PlayerCommand::Play);
+                            } else if game.performing(index) {
+                                w.attempt = Some(attack);
+                                self.waiting = Some(w);
+                            } else {
+                                w.attacks.retain(|&a| a > ready);
+                                self.waiting = Some(w);
+                            }
+                        } else {
+                            w.attacks.retain(|&a| a > ready);
+                            self.waiting = Some(w);
+                        }
                     }
                 }
                 None if clock.playing => {
@@ -880,7 +978,7 @@ impl<B: AudioBackend> Session<B> {
                         .map(|(i, _)| i);
                     if let Some(index) = due {
                         monitor.send(PlayerCommand::Pause);
-                        self.waiting = Some(Waiting { index, from: input_now, attacks: Vec::new() });
+                        self.waiting = Some(Waiting { index, from: input_now, attacks: Vec::new(), attempt: None, paused: false });
                         self.events.push(UiEvent::Waiting { index });
                     }
                 }
@@ -914,7 +1012,7 @@ impl<B: AudioBackend> Session<B> {
             let lag = self.cfg.game.input_offset * self.rate;
             for (index, time, pitches) in game.chords_ready(now, listen) {
                 let (pitches, brushable) = match &game.expected()[index].target {
-                    Target::Chord { template, .. } => game.chart().judged(*template),
+                    Target::Chord { template, .. } => judging.chord(game.chart(), *template),
                     Target::Note { .. } => (pitches, Vec::new()),
                 };
                 let at = time + lag;
@@ -984,32 +1082,67 @@ impl<B: AudioBackend> Session<B> {
             // hammer-on): the detector, at the attack nearest to them.
             if let Some(listener) = self.listener.as_mut() {
                 for (index, time, midi) in game.notes_ready(now, w + listen + TAP_DELAY) {
-                    // At the end of its window: each attack seen in it, nearest first, and the
-                    // note's own time when none was seen near it.
+                    // Only real, unclaimed attacks can play it. A ringing note at the chart's
+                    // own time is not evidence of another pick.
                     let at = time + lag;
-                    let mut candidates: Vec<f64> = self.attacks.iter().copied().filter(|a| (a - at).abs() <= w).collect();
+                    let mut candidates: Vec<f64> = self.attacks.iter().copied().filter(|a| (a - at).abs() <= w && game.attack_available(*a)).collect();
                     candidates.sort_by(|x, y| (x - at).abs().total_cmp(&(y - at).abs()));
-                    if candidates.first().is_none_or(|a| (a - at).abs() > 0.03) {
-                        candidates.push(at);
-                    }
                     let heard = candidates.into_iter().find(|&a| {
+                        let sample = monitor.input_index_at(clock.host_at(a + offset, sr));
+                        if sample.and_then(|s| attack_pitch(&self.attack_pitches, s, sr)).is_some_and(|p| !game.pitch_matches(p, midi)) {
+                            return false;
+                        }
                         listener
                             .attacked(monitor, &clock, &self.history, a + offset, self.rate, self.cents, sr)
-                            .is_some_and(|(first, probs)| probs.get((midi - first) as usize).is_some_and(|&p| p >= heard))
+                            .is_some_and(|(first, probs)| heard_note(first, &probs, midi, heard))
                     });
                     self.events.extend(game.on_note_heard(index, heard.is_some(), heard).map(UiEvent::from));
                 }
             }
         }
 
-        self.events.extend(game.advance(now).into_iter().map(UiEvent::from));
+        if clock.playing {
+            for &(sample, pitch) in &self.pitch_history {
+                if let Some(time) = song(monitor, sample) { game.observe_pitch(time, pitch); }
+            }
+            for &(sample, db) in &self.level_history {
+                if let Some(time) = song(monitor, sample) { game.observe_level(time, db); }
+            }
+            // A held note under other ringing strings need not be the monophonic tracker's
+            // loudest pitch. Check its own spectral evidence every 20 ms, after its attack
+            // was proved, and without overriding any contradictory tracker evidence.
+            let end = self.history.end();
+            let window = self.verifier.config().window as u64;
+            if end >= window && end.saturating_sub(self.last_sustain_sample) >= (0.02 * sr) as u64 {
+                self.last_sustain_sample = end;
+                for (index, attack, midi, after) in game.sustained_notes() {
+                    let lag = self.cfg.game.input_offset * self.rate;
+                    let first = (attack + window as f64 / sr * self.rate).max(after + 0.02 * self.rate) + lag;
+                    let Some(centre) = monitor.input_index_at(clock.host_at(first + offset, sr)) else { continue };
+                    let mut frame_end = (centre.max(0.0).round() as u64 + window / 2).max(window);
+                    self.scratch.resize(window as usize, 0.0);
+                    while frame_end <= end {
+                        if let Some(time) = song(monitor, frame_end - window / 2) {
+                            let a4 = self.cfg.a4 * 2f32.powf(self.cents as f32 / 1200.0);
+                            let present = self.history.read(frame_end - window, &mut self.scratch)
+                                && self.verifier.verify(&self.scratch, &[midi], a4).present[0];
+                            game.observe_sustain(index, time, present);
+                        }
+                        frame_end += ((0.02 * sr) as u64).max(1);
+                    }
+                }
+            }
+        }
+        let finished = if self.has_track {
+            audio_ended && now >= audio_end + (0.5 + self.cfg.game.input_offset.max(0.0)) * self.rate
+        } else { now > self.duration + 1.0 };
+        self.events.extend(game.advance(if finished { f64::INFINITY } else { now }).into_iter().map(UiEvent::from));
         flush_expected(game, &mut self.sent, &mut self.events);
         let score = game.score();
         if score != self.last_score {
             self.last_score = score;
             self.events.push(UiEvent::Score { score: score.into() });
         }
-        let finished = if self.has_track { clock.ended } else { now > self.duration + 1.0 };
         if finished && !self.ended {
             self.ended = true;
             self.events.push(UiEvent::End);
@@ -1038,8 +1171,13 @@ impl<B: AudioBackend> Session<B> {
         self.target = t;
         self.sent = 0;
         self.attacks.clear();
+        self.attack_pitches.clear();
+        self.pitch_history.clear();
+        self.level_history.clear();
+        self.last_sustain_sample = 0;
         self.last_score = Score::default();
         self.ended = false;
+        self.last_playing_clock = None;
         self.events.push(UiEvent::Reset);
     }
 
@@ -1048,6 +1186,23 @@ impl<B: AudioBackend> Session<B> {
         let c = self.backend.monitor().clock();
         (c.valid && c.generation == self.generation).then_some(c)
     }
+}
+
+/// A single note needs the strongest attacked pitch, not just a weak secondary response at
+/// its expected pitch. Harmonics and neighbouring bins must not turn another note into a hit.
+fn heard_note(first: i32, probs: &[f32], midi: i32, threshold: f32) -> bool {
+    let Some(&p) = probs.get((midi - first) as usize) else { return false };
+    p >= threshold && probs.iter().enumerate().all(|(k, &other)| first + k as i32 == midi || other < p)
+}
+
+/// Onset and pitch estimates of a pick can differ by a few milliseconds. Input samples keep
+/// that association valid at every playback speed and while a lesson waits on a note.
+fn attack_pitch(pitches: &VecDeque<(u64, f64)>, sample: f64, sr: f64) -> Option<f64> {
+    pitches
+        .iter()
+        .filter(|&&(at, _)| (at as f64 - sample).abs() <= 0.005 * sr)
+        .min_by(|a, b| (a.0 as f64 - sample).abs().total_cmp(&(b.0 as f64 - sample).abs()))
+        .map(|&(_, pitch)| pitch)
 }
 
 impl<B: AudioBackend> Drop for Session<B> {
@@ -1091,14 +1246,9 @@ fn strum_audio<'a>(
     history.read(first.round() as u64, scratch).then_some(&scratch[..])
 }
 
-/// What makes a chord count: three quarters of its notes heard (a string missed or let mute is
-/// fine), and no more than 40 % of the sound, nor a single peak within 9 dB of the loudest,
-/// unexplained by it. Measured with the virtual guitarist (`opensmith-simulate`) on charts of
-/// every kind: chords played right counted 85 % of the time (55 % when every note and almost
-/// no other sound was required), wrong ones refused 87 %.
-fn chord_config() -> ChordConfig {
-    ChordConfig { min_present: 0.75, max_foreign: 0.4, foreign_peak_db: -9.0, ..ChordConfig::default() }
-}
+/// Conservative spectral fallback if the learned detector is unavailable: every requested
+/// pitch, with little unexplained energy. Never silently weaken harmonic identity.
+fn chord_config() -> ChordConfig { ChordConfig::default() }
 
 /// How much louder (dB) the guitar is over the 40 ms from track time `t` than over the 45 ms
 /// before.
@@ -1137,8 +1287,8 @@ mod tests {
         let faint = probs(&[(43, 0.9), (50, 0.9), (55, 0.3)]);
         assert!(!strummed(40, &faint, &g5, &[], &Judging::STRICT));
         assert!(strummed(40, &faint, &g5, &[], &Judging::NORMAL));
-        // A foreign note heard fairly surely (0.9): wrong for strict, forgiven above.
-        let foreign = probs(&[(43, 0.9), (50, 0.9), (55, 0.9), (46, 0.9)]);
+        // A moderately confident foreign pitch: only strict refuses it.
+        let foreign = probs(&[(43, 0.9), (50, 0.9), (55, 0.9), (46, 0.7)]);
         assert!(!strummed(40, &foreign, &g5, &[], &Judging::STRICT));
         assert!(strummed(40, &foreign, &g5, &[], &Judging::NORMAL));
         // Heard for sure, a foreign note is wrong at every level but lenient, which forgives
@@ -1146,10 +1296,10 @@ mod tests {
         let loud = probs(&[(43, 0.9), (50, 0.9), (55, 0.9), (46, 0.99)]);
         assert!(!strummed(40, &loud, &g5, &[], &Judging::NORMAL));
         assert!(!strummed(40, &loud, &g5, &[], &Judging::LENIENT));
-        // Half the chord is enough when lenient.
-        let half = probs(&[(43, 0.9), (50, 0.3), (55, 0.9)]);
-        assert!(strummed(40, &half, &[43, 50, 55, 59], &[], &Judging::LENIENT));
-        assert!(!strummed(40, &half, &[43, 50, 55, 59], &[], &Judging::NORMAL));
+        // Half the strings can suffice when lenient if they preserve the bass and all pitch classes.
+        let half = probs(&[(43, 0.9), (50, 0.9), (55, 0.3), (62, 0.3)]);
+        assert!(strummed(40, &half, &[43, 50, 55, 62], &[], &Judging::LENIENT));
+        assert!(!strummed(40, &half, &[43, 50, 55, 62], &[], &Judging::NORMAL));
     }
 
     /// An A minor (x02210) from a chart of `source`.
@@ -1168,14 +1318,16 @@ mod tests {
     }
 
     #[test]
-    fn a_chord_transcribed_from_a_recording_counts_major_or_minor() {
+    fn transcribed_thirds_are_forgiven_normally_but_checked_in_strict_mode() {
         // A major strummed (A2 E3 A3 C#4 E4) where the chart says A minor (… C4 …), its third
         // heard for sure.
         let major = probs(&[(45, 0.9), (52, 0.9), (57, 0.9), (61, 0.99), (64, 0.9)]);
         let transcribed = a_minor("audio");
-        let (required, allowed) = transcribed.judged(0);
+        let (required, allowed) = Judging::NORMAL.chord(&transcribed, 0);
         assert_eq!(required, vec![45, 52, 57, 64], "the third left free");
-        assert!(strummed(40, &major, &required, &allowed, &Judging::STRICT));
+        assert!(strummed(40, &major, &required, &allowed, &Judging::NORMAL));
+        let (strict, allowed_strict) = Judging::STRICT.chord(&transcribed, 0);
+        assert!(!strummed(40, &major, &strict, &allowed_strict, &Judging::STRICT));
         // The root and the fifth still have to be there: a C major is not an A anything.
         let c_major = probs(&[(48, 0.9), (52, 0.9), (55, 0.9), (60, 0.9), (64, 0.9)]);
         assert!(!strummed(40, &c_major, &required, &allowed, &Judging::NORMAL));

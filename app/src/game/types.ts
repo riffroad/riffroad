@@ -27,7 +27,8 @@ export type MissReason =
   /** Another note, `semitones` away: positive when too high. */
   | { kind: 'pitch'; semitones: number }
   /** Strummed in time, not heard as the chord. */
-  | { kind: 'wrongChord' };
+  | { kind: 'wrongChord' }
+  | { kind: 'technique' };
 
 export interface Score {
   hits: number;

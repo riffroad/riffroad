@@ -510,7 +510,7 @@ impl Writer {
             }
         }
         let total = (self.beat.ceil() as usize).max(4) + 8;
-        let beats: Vec<Value> = (0..total).map(|k| if k % 4 == 0 { json!({ "time": self.time(k as f64), "bar": k / 4 + 1 }) } else { json!({ "time": self.time(k as f64) }) }).collect();
+        let beats: Vec<Value> = (0..total).take_while(|&k| self.time(k as f64) <= duration).map(|k| if k % 4 == 0 { json!({ "time": self.time(k as f64), "bar": k / 4 + 1 }) } else { json!({ "time": self.time(k as f64) }) }).collect();
         let phrases: Vec<Value> = self.sections.iter().map(|s| json!({ "name": s.phrase.to_string(), "start": self.time(s.start), "end": self.time(s.end), "maxDifficulty": TOP })).collect();
         let sections: Vec<Value> = self.sections.iter().map(|s| json!({ "name": s.kind, "start": self.time(s.start), "end": self.time(s.end) })).collect();
         let templates: Vec<Value> = templates.iter().map(|(f, n)| json!({ "name": n, "frets": f, "fingers": fingers(f) })).collect();
